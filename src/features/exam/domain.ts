@@ -35,6 +35,7 @@ export const QuestionSchema = z
     stem: LocalizedTextSchema,
     options: z.array(QuestionOptionSchema).min(2),
     acceptedOptionIds: z.array(z.string().trim().min(1)).default([]),
+    solution: LocalizedTextSchema.optional(),
     disposition: QuestionDispositionSchema.default("standard"),
     marking: MarkingSchemeSchema,
   })

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../features/imports/admin-import.css";
 
 :root {
   --canvas: #f4f7fb;
