@@ -59,6 +59,57 @@ input {
   font: inherit;
 }
 
+.status-page {
+  align-items: center;
+  background:
+    radial-gradient(circle at 80% 12%, rgba(22, 189, 215, 0.16), transparent 30rem),
+    radial-gradient(circle at 12% 76%, rgba(150, 102, 237, 0.14), transparent 32rem),
+    var(--canvas);
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.status-card {
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+  max-width: 620px;
+  padding: clamp(28px, 6vw, 52px);
+  text-align: center;
+}
+
+.status-card > svg {
+  color: var(--cobalt);
+  height: 44px;
+  margin-bottom: 18px;
+  width: 44px;
+}
+
+.status-card h1 {
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  letter-spacing: -0.055em;
+  line-height: 1;
+  margin: 12px 0 16px;
+}
+
+.status-card > p:not(.eyebrow) {
+  color: var(--text-soft);
+  line-height: 1.7;
+  margin: 0 auto 24px;
+}
+
+.status-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
 button,
 a {
   -webkit-tap-highlight-color: transparent;
@@ -1014,6 +1065,24 @@ input:focus-visible {
   margin: 18px auto 0;
   max-width: 340px;
   text-align: center;
+}
+
+.auth-panel__status {
+  border-radius: 12px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  margin: 14px 0 0;
+  padding: 11px 13px;
+}
+
+.auth-panel__status--sent {
+  background: rgba(25, 185, 140, 0.11);
+  color: color-mix(in srgb, var(--mint) 78%, var(--text));
+}
+
+.auth-panel__status--error {
+  background: rgba(224, 82, 103, 0.11);
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
 }
 
 @media (max-width: 940px) {

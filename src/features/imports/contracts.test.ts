@@ -5,11 +5,49 @@ import { POST } from "@/app/api/imports/route";
 import { PublishImportRequestSchema } from "@/features/imports/contracts";
 
 describe("import API contracts", () => {
+  const adminHeaders = {
+    "content-type": "application/json",
+    "x-medmock-user-id": "admin-current",
+    "x-medmock-role": "admin",
+  };
+
+  it("requires an authenticated admin for import creation", async () => {
+    const payload = JSON.stringify({
+      source: {
+        fileId: "file-openai",
+        fileName: "neet-2025.pdf",
+        mimeType: "application/pdf",
+      },
+      providerSelection: "both",
+    });
+    const unauthenticated = await POST(
+      new Request("http://localhost/api/imports", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload,
+      }),
+    );
+    const student = await POST(
+      new Request("http://localhost/api/imports", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-medmock-user-id": "student-current",
+          "x-medmock-role": "student",
+        },
+        body: payload,
+      }),
+    );
+
+    expect(unauthenticated.status).toBe(401);
+    expect(student.status).toBe(403);
+  });
+
   it("creates an import and exposes its validated status", async () => {
     const createResponse = await POST(
       new Request("http://localhost/api/imports", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: adminHeaders,
         body: JSON.stringify({
           source: {
             fileId: "file-openai",
@@ -24,7 +62,9 @@ describe("import API contracts", () => {
 
     expect(createResponse.status).toBe(202);
     const statusResponse = await GET(
-      new Request("http://localhost/api/imports/" + created.importId),
+      new Request("http://localhost/api/imports/" + created.importId, {
+        headers: adminHeaders,
+      }),
       { params: Promise.resolve({ importId: created.importId }) },
     );
 

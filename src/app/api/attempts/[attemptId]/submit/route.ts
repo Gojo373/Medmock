@@ -5,11 +5,19 @@ import {
   SubmitAttemptResponseSchema,
 } from "@/features/exam/contracts";
 import { submitAttemptRecord } from "@/features/exam/server/attempt-store";
+import { getRequestUser } from "@/lib/auth/server-auth";
+import { logServerEvent } from "@/lib/server/logger";
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ attemptId: string }> },
 ) {
+  const user = await getRequestUser(request);
+
+  if (!user) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const { attemptId } = await context.params;
   const parsedId = z.string().uuid().safeParse(attemptId);
 
@@ -27,7 +35,17 @@ export async function POST(
     );
   }
 
-  const result = submitAttemptRecord(parsedId.data, Date.now());
+  let result;
+
+  try {
+    result = await submitAttemptRecord(parsedId.data, user.id, Date.now());
+  } catch {
+    logServerEvent("error", "attempt.submit_failed", {
+      attemptId: parsedId.data,
+      userId: user.id,
+    });
+    return Response.json({ error: "service_unavailable" }, { status: 503 });
+  }
 
   if (!result.ok) {
     return Response.json({ error: result.error }, { status: 404 });

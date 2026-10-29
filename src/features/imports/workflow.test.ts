@@ -311,6 +311,12 @@ describe("review and publish policy", () => {
         },
       ],
     });
+    expect(Object.isFrozen(version)).toBe(true);
+    expect(Object.isFrozen(version.questions)).toBe(true);
+    expect(Object.isFrozen(version.questions[0])).toBe(true);
+    expect(() => {
+      version.questions[0].topic = "Mutated after publication";
+    }).toThrow();
   });
 
   it("requires an explicit review completion event before publication", () => {

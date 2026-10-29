@@ -2,11 +2,23 @@ import { z } from "zod";
 
 import { ImportStatusResponseSchema } from "@/features/imports/contracts";
 import { getImportJob } from "@/features/imports/server/import-job-store";
+import { getRequestUser } from "@/lib/auth/server-auth";
+import { logServerEvent } from "@/lib/server/logger";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ importId: string }> },
 ) {
+  const user = await getRequestUser(request);
+
+  if (!user) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  if (user.role !== "admin") {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const { importId } = await context.params;
   const parsedId = z.string().uuid().safeParse(importId);
 
@@ -14,7 +26,14 @@ export async function GET(
     return Response.json({ error: "invalid_import_id" }, { status: 400 });
   }
 
-  const job = getImportJob(parsedId.data);
+  let job;
+
+  try {
+    job = await getImportJob(parsedId.data);
+  } catch {
+    logServerEvent("error", "import.read_failed", { importId: parsedId.data });
+    return Response.json({ error: "service_unavailable" }, { status: 503 });
+  }
 
   if (!job) {
     return Response.json({ error: "import_not_found" }, { status: 404 });

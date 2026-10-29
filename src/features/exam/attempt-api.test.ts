@@ -14,10 +14,17 @@ type CreatedAttempt = {
   deadlineAt: string;
 };
 
-function attemptRequest(idempotencyKey: string) {
+function authHeaders(userId = "student-current") {
+  return {
+    "x-medmock-user-id": userId,
+    "x-medmock-role": "student",
+  };
+}
+
+function attemptRequest(idempotencyKey: string, userId = "student-current") {
   return new Request("http://localhost/api/attempts", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders(userId) },
     body: JSON.stringify({
       paperVersionId: sampleExamPaper.id,
       mode: "mock",
@@ -28,8 +35,11 @@ function attemptRequest(idempotencyKey: string) {
   });
 }
 
-async function startAttempt(idempotencyKey = crypto.randomUUID()) {
-  const response = await createAttempt(attemptRequest(idempotencyKey));
+async function startAttempt(
+  idempotencyKey = crypto.randomUUID(),
+  userId = "student-current",
+) {
+  const response = await createAttempt(attemptRequest(idempotencyKey, userId));
   const body = (await response.json()) as CreatedAttempt;
   return { response, body };
 }
@@ -50,18 +60,22 @@ function answerEvent(attemptId: string, eventId = crypto.randomUUID()) {
   };
 }
 
-function eventRequest(attemptId: string, events: ReturnType<typeof answerEvent>[]) {
+function eventRequest(
+  attemptId: string,
+  events: ReturnType<typeof answerEvent>[],
+  userId = "student-current",
+) {
   return new Request("http://localhost/api/attempts/" + attemptId + "/events", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders(userId) },
     body: JSON.stringify({ events }),
   });
 }
 
-function submissionRequest(attemptId: string) {
+function submissionRequest(attemptId: string, userId = "student-current") {
   return new Request("http://localhost/api/attempts/" + attemptId + "/submit", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders(userId) },
     body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
   });
 }
@@ -71,6 +85,25 @@ afterEach(() => {
 });
 
 describe("attempt API contracts", () => {
+  it("rejects unauthenticated attempt creation", async () => {
+    const response = await createAttempt(
+      new Request("http://localhost/api/attempts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          paperVersionId: sampleExamPaper.id,
+          mode: "mock",
+          strict: true,
+          visibility: "public",
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "unauthorized" });
+  });
+
   it("replays attempt creation without creating a second timed attempt", async () => {
     vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
     const idempotencyKey = crypto.randomUUID();
@@ -134,6 +167,24 @@ describe("attempt API contracts", () => {
       error: "answer_event_conflict",
       eventId: event.id,
     });
+  });
+
+  it("does not reveal or mutate another student's attempt", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
+    const { body: attempt } = await startAttempt();
+    const event = answerEvent(attempt.attemptId);
+
+    const eventResponse = await appendEvents(
+      eventRequest(attempt.attemptId, [event], "student-intruder"),
+      routeContext(attempt.attemptId),
+    );
+    const submitResponse = await submitAttempt(
+      submissionRequest(attempt.attemptId, "student-intruder"),
+      routeContext(attempt.attemptId),
+    );
+
+    expect(eventResponse.status).toBe(404);
+    expect(submitResponse.status).toBe(404);
   });
 
   it("returns the same finalized result when submission is replayed", async () => {

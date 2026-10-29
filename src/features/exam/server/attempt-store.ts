@@ -1,4 +1,6 @@
 import {
+  CreateAttemptResponseSchema,
+  SubmitAttemptResponseSchema,
   type AnswerEventContract,
   type AppendAnswerEventsResponse,
   type CreateAttemptRequest,
@@ -7,12 +9,37 @@ import {
 } from "@/features/exam/contracts";
 import {
   AttemptSchema,
+  PaperVersionSchema,
   type Attempt,
   type PaperVersion,
 } from "@/features/exam/domain";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
 import { scoreAttempt } from "@/features/exam/scoring";
 import { materializeAnswers, mergeAnswerEvents } from "@/features/exam/session";
+import {
+  createSupabaseAdminClient,
+  hasSupabaseServerConfig,
+} from "@/lib/supabase/server";
+
+type CreateAttemptResult =
+  | { ok: true; replayed: boolean; response: CreateAttemptResponse }
+  | { ok: false; error: "paper_not_found" | "idempotency_conflict" };
+
+type AppendAttemptEventsResult =
+  | { ok: true; response: AppendAnswerEventsResponse }
+  | {
+      ok: false;
+      error:
+        | "attempt_not_found"
+        | "attempt_submitted"
+        | "invalid_answer_event"
+        | "answer_event_conflict";
+      eventId?: string;
+    };
+
+type SubmitAttemptResult =
+  | { ok: true; response: SubmitAttemptResponse }
+  | { ok: false; error: "attempt_not_found" };
 
 type AttemptRecord = {
   attempt: Attempt;
@@ -58,13 +85,11 @@ function idempotencyLookupKey(userId: string, idempotencyKey: string) {
   return userId + ":" + idempotencyKey;
 }
 
-export function createAttemptRecord(
+function createMemoryAttemptRecord(
   request: CreateAttemptRequest,
   userId: string,
   nowMs: number,
-):
-  | { ok: true; replayed: boolean; response: CreateAttemptResponse }
-  | { ok: false; error: "paper_not_found" | "idempotency_conflict" } {
+): CreateAttemptResult {
   const paper = paperVersions.get(request.paperVersionId);
 
   if (!paper) {
@@ -158,23 +183,16 @@ function eventBelongsToPaper(
   );
 }
 
-export function appendAttemptEvents(
+function appendMemoryAttemptEvents(
   attemptId: string,
+  userId: string,
   events: AnswerEventContract[],
-):
-  | { ok: true; response: AppendAnswerEventsResponse }
-  | {
-      ok: false;
-      error:
-        | "attempt_not_found"
-        | "attempt_submitted"
-        | "invalid_answer_event"
-        | "answer_event_conflict";
-      eventId?: string;
-    } {
+): AppendAttemptEventsResult {
   const record = state.attempts.get(attemptId);
 
-  if (!record) return { ok: false, error: "attempt_not_found" };
+  if (!record || record.attempt.userId !== userId) {
+    return { ok: false, error: "attempt_not_found" };
+  }
   if (record.submittedResponse) return { ok: false, error: "attempt_submitted" };
 
   const knownEvents = new Map(record.events.map((event) => [event.id, event]));
@@ -232,15 +250,16 @@ function buildAttemptAnswers(record: AttemptRecord) {
   });
 }
 
-export function submitAttemptRecord(
+function submitMemoryAttemptRecord(
   attemptId: string,
+  userId: string,
   nowMs: number,
-):
-  | { ok: true; response: SubmitAttemptResponse }
-  | { ok: false; error: "attempt_not_found" } {
+): SubmitAttemptResult {
   const record = state.attempts.get(attemptId);
 
-  if (!record) return { ok: false, error: "attempt_not_found" };
+  if (!record || record.attempt.userId !== userId) {
+    return { ok: false, error: "attempt_not_found" };
+  }
   if (record.submittedResponse) {
     return { ok: true, response: record.submittedResponse };
   }
@@ -268,4 +287,395 @@ export function submitAttemptRecord(
   record.submittedResponse = response;
 
   return { ok: true, response };
+}
+
+function shouldUsePersistentStore() {
+  if (process.env.NODE_ENV === "test") return false;
+  if (!hasSupabaseServerConfig()) {
+    throw new Error("Supabase persistence is not configured.");
+  }
+
+  return true;
+}
+
+function responseFromAttemptRow(row: Record<string, unknown>) {
+  return CreateAttemptResponseSchema.parse({
+    attemptId: row.id,
+    status: "active",
+    startedAt: row.started_at,
+    deadlineAt: row.deadline_at,
+  });
+}
+
+async function createPersistentAttemptRecord(
+  request: CreateAttemptRequest,
+  userId: string,
+  nowMs: number,
+): Promise<CreateAttemptResult> {
+  const client = createSupabaseAdminClient();
+  const { data: paperRow, error: paperError } = await client
+    .from("paper_versions")
+    .select("id, content")
+    .eq("id", request.paperVersionId)
+    .eq("status", "published")
+    .maybeSingle();
+
+  if (paperError) throw paperError;
+  if (!paperRow) return { ok: false, error: "paper_not_found" };
+
+  const paper = PaperVersionSchema.parse(paperRow.content);
+  const fingerprint = requestFingerprint(request);
+  const { data: existing, error: existingError } = await client
+    .from("attempts")
+    .select("id, started_at, deadline_at, request_fingerprint")
+    .eq("user_id", userId)
+    .eq("creation_idempotency_key", request.idempotencyKey)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+  if (existing) {
+    if (existing.request_fingerprint !== fingerprint) {
+      return { ok: false, error: "idempotency_conflict" };
+    }
+
+    return {
+      ok: true,
+      replayed: true,
+      response: responseFromAttemptRow(existing),
+    };
+  }
+
+  const { count, error: countError } = await client
+    .from("attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("paper_version_id", paper.id)
+    .eq("mode", request.mode)
+    .eq("strict", request.strict);
+
+  if (countError) throw countError;
+
+  const attemptId = crypto.randomUUID();
+  const startedAt = new Date(nowMs).toISOString();
+  const deadlineAt = new Date(
+    nowMs + paper.durationMinutes * 60_000,
+  ).toISOString();
+  const row = {
+    id: attemptId,
+    user_id: userId,
+    paper_version_id: paper.id,
+    mode: request.mode,
+    strict: request.strict,
+    attempt_number: (count ?? 0) + 1,
+    visibility: request.visibility,
+    integrity_status: "clear",
+    started_at: startedAt,
+    deadline_at: deadlineAt,
+    request_fingerprint: fingerprint,
+    creation_idempotency_key: request.idempotencyKey,
+  };
+  const { error: insertError } = await client.from("attempts").insert(row);
+
+  if (insertError) {
+    if (insertError.code === "23505") {
+      const { data: replay } = await client
+        .from("attempts")
+        .select("id, started_at, deadline_at, request_fingerprint")
+        .eq("user_id", userId)
+        .eq("creation_idempotency_key", request.idempotencyKey)
+        .maybeSingle();
+
+      if (replay?.request_fingerprint === fingerprint) {
+        return {
+          ok: true,
+          replayed: true,
+          response: responseFromAttemptRow(replay),
+        };
+      }
+
+      return { ok: false, error: "idempotency_conflict" };
+    }
+
+    throw insertError;
+  }
+
+  return {
+    ok: true,
+    replayed: false,
+    response: CreateAttemptResponseSchema.parse({
+      attemptId,
+      status: "active",
+      startedAt,
+      deadlineAt,
+    }),
+  };
+}
+
+function eventFromRow(row: Record<string, unknown>): AnswerEventContract {
+  return {
+    id: row.id as string,
+    attemptId: row.attempt_id as string,
+    questionId: row.question_id as string,
+    type: row.event_type as AnswerEventContract["type"],
+    ...((row.selected_option_id as string | null)
+      ? { selectedOptionId: row.selected_option_id as string }
+      : {}),
+    occurredAt: Number(row.occurred_at_ms),
+    clientSequence: Number(row.client_sequence),
+  };
+}
+
+async function loadPersistentAttempt(
+  attemptId: string,
+  userId: string,
+) {
+  const client = createSupabaseAdminClient();
+  const { data: attemptRow, error: attemptError } = await client
+    .from("attempts")
+    .select("*")
+    .eq("id", attemptId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (attemptError) throw attemptError;
+  if (!attemptRow) return undefined;
+
+  const { data: paperRow, error: paperError } = await client
+    .from("paper_versions")
+    .select("content")
+    .eq("id", attemptRow.paper_version_id)
+    .single();
+
+  if (paperError) throw paperError;
+
+  return {
+    client,
+    attemptRow,
+    paper: PaperVersionSchema.parse(paperRow.content),
+  };
+}
+
+async function appendPersistentAttemptEvents(
+  attemptId: string,
+  userId: string,
+  events: AnswerEventContract[],
+): Promise<AppendAttemptEventsResult> {
+  const loaded = await loadPersistentAttempt(attemptId, userId);
+
+  if (!loaded) return { ok: false, error: "attempt_not_found" };
+  if (loaded.attemptRow.submitted_at) {
+    return { ok: false, error: "attempt_submitted" };
+  }
+
+  const record = {
+    attempt: { userId },
+    paper: loaded.paper,
+  } as AttemptRecord;
+  const ids = events.map((event) => event.id);
+  const { data: existingRows, error: existingError } = await loaded.client
+    .from("answer_events")
+    .select("*")
+    .eq("attempt_id", attemptId)
+    .in("id", ids);
+
+  if (existingError) throw existingError;
+
+  const existing = new Map(
+    (existingRows ?? []).map((row) => [row.id as string, eventFromRow(row)]),
+  );
+  const accepted: AnswerEventContract[] = [];
+  const duplicateEventIds: string[] = [];
+
+  for (const event of events) {
+    if (event.attemptId !== attemptId || !eventBelongsToPaper(event, record)) {
+      return { ok: false, error: "invalid_answer_event", eventId: event.id };
+    }
+
+    const known = existing.get(event.id);
+    if (known) {
+      if (!sameEvent(known, event)) {
+        return { ok: false, error: "answer_event_conflict", eventId: event.id };
+      }
+
+      duplicateEventIds.push(event.id);
+    } else {
+      accepted.push(event);
+    }
+  }
+
+  if (accepted.length > 0) {
+    const { error: insertError } = await loaded.client
+      .from("answer_events")
+      .insert(
+        accepted.map((event) => ({
+          id: event.id,
+          attempt_id: attemptId,
+          question_id: event.questionId,
+          event_type: event.type,
+          selected_option_id: event.selectedOptionId ?? null,
+          occurred_at_ms: event.occurredAt,
+          client_sequence: event.clientSequence,
+        })),
+      );
+
+    if (insertError) throw insertError;
+  }
+
+  const { count, error: countError } = await loaded.client
+    .from("answer_events")
+    .select("id", { count: "exact", head: true })
+    .eq("attempt_id", attemptId);
+
+  if (countError) throw countError;
+
+  return {
+    ok: true,
+    response: {
+      acceptedEventIds: accepted.map((event) => event.id),
+      duplicateEventIds,
+      eventCount: count ?? 0,
+    },
+  };
+}
+
+async function submitPersistentAttemptRecord(
+  attemptId: string,
+  userId: string,
+  nowMs: number,
+): Promise<SubmitAttemptResult> {
+  const loaded = await loadPersistentAttempt(attemptId, userId);
+
+  if (!loaded) return { ok: false, error: "attempt_not_found" };
+  if (loaded.attemptRow.submitted_response) {
+    return {
+      ok: true,
+      response: SubmitAttemptResponseSchema.parse(
+        loaded.attemptRow.submitted_response,
+      ),
+    };
+  }
+
+  const { data: eventRows, error: eventError } = await loaded.client
+    .from("answer_events")
+    .select("*")
+    .eq("attempt_id", attemptId)
+    .order("client_sequence", { ascending: true });
+
+  if (eventError) throw eventError;
+
+  const events = (eventRows ?? []).map(eventFromRow);
+  const materialized = materializeAnswers(events);
+  const submittedAt = new Date(nowMs).toISOString();
+  const submissionReason =
+    nowMs >= Date.parse(loaded.attemptRow.deadline_at) ? "expired" : "manual";
+  const attempt = AttemptSchema.parse({
+    id: attemptId,
+    userId,
+    paperVersionId: loaded.paper.id,
+    mode: loaded.attemptRow.mode,
+    strict: loaded.attemptRow.strict,
+    attemptNumber: loaded.attemptRow.attempt_number,
+    visibility: loaded.attemptRow.visibility,
+    integrityStatus: loaded.attemptRow.integrity_status,
+    startedAt: loaded.attemptRow.started_at,
+    deadlineAt: loaded.attemptRow.deadline_at,
+    submittedAt,
+    answers: loaded.paper.questions.flatMap((question) => {
+      const answer = materialized[question.id];
+      return answer
+        ? [{
+            questionId: question.id,
+            selectedOptionId: answer.selectedOptionId,
+            answeredAt: new Date(answer.answeredAt).toISOString(),
+            timeSpentMs: 0,
+          }]
+        : [];
+    }),
+  });
+  const result = scoreAttempt(loaded.paper, attempt);
+  const response = SubmitAttemptResponseSchema.parse({
+    attemptId,
+    status: "submitted",
+    submissionReason,
+    submittedAt,
+    result,
+  });
+  const { data: updated, error: updateError } = await loaded.client
+    .from("attempts")
+    .update({
+      submitted_at: submittedAt,
+      submission_reason: submissionReason,
+      submitted_response: response,
+    })
+    .eq("id", attemptId)
+    .eq("user_id", userId)
+    .is("submitted_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) throw updateError;
+  if (!updated) {
+    const { data: replay, error: replayError } = await loaded.client
+      .from("attempts")
+      .select("submitted_response")
+      .eq("id", attemptId)
+      .eq("user_id", userId)
+      .single();
+
+    if (replayError) throw replayError;
+    return {
+      ok: true,
+      response: SubmitAttemptResponseSchema.parse(replay.submitted_response),
+    };
+  }
+
+  const { error: resultError } = await loaded.client
+    .from("attempt_results")
+    .upsert(
+      {
+        attempt_id: attemptId,
+        user_id: userId,
+        paper_version_id: loaded.paper.id,
+        score: result.score,
+        max_score: result.maxScore,
+        correct: result.correct,
+        incorrect: result.incorrect,
+        result,
+      },
+      { onConflict: "attempt_id" },
+    );
+
+  if (resultError) throw resultError;
+
+  return { ok: true, response };
+}
+
+export async function createAttemptRecord(
+  request: CreateAttemptRequest,
+  userId: string,
+  nowMs: number,
+): Promise<CreateAttemptResult> {
+  return shouldUsePersistentStore()
+    ? createPersistentAttemptRecord(request, userId, nowMs)
+    : createMemoryAttemptRecord(request, userId, nowMs);
+}
+
+export async function appendAttemptEvents(
+  attemptId: string,
+  userId: string,
+  events: AnswerEventContract[],
+): Promise<AppendAttemptEventsResult> {
+  return shouldUsePersistentStore()
+    ? appendPersistentAttemptEvents(attemptId, userId, events)
+    : appendMemoryAttemptEvents(attemptId, userId, events);
+}
+
+export async function submitAttemptRecord(
+  attemptId: string,
+  userId: string,
+  nowMs: number,
+): Promise<SubmitAttemptResult> {
+  return shouldUsePersistentStore()
+    ? submitPersistentAttemptRecord(attemptId, userId, nowMs)
+    : submitMemoryAttemptRecord(attemptId, userId, nowMs);
 }

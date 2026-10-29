@@ -5,11 +5,19 @@ import {
   AppendAnswerEventsResponseSchema,
 } from "@/features/exam/contracts";
 import { appendAttemptEvents } from "@/features/exam/server/attempt-store";
+import { getRequestUser } from "@/lib/auth/server-auth";
+import { logServerEvent } from "@/lib/server/logger";
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ attemptId: string }> },
 ) {
+  const user = await getRequestUser(request);
+
+  if (!user) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const { attemptId } = await context.params;
   const parsedId = z.string().uuid().safeParse(attemptId);
 
@@ -27,7 +35,21 @@ export async function POST(
     );
   }
 
-  const result = appendAttemptEvents(parsedId.data, parsed.data.events);
+  let result;
+
+  try {
+    result = await appendAttemptEvents(
+      parsedId.data,
+      user.id,
+      parsed.data.events,
+    );
+  } catch {
+    logServerEvent("error", "attempt.events_failed", {
+      attemptId: parsedId.data,
+      userId: user.id,
+    });
+    return Response.json({ error: "service_unavailable" }, { status: 503 });
+  }
 
   if (!result.ok) {
     if (result.error === "attempt_not_found") {

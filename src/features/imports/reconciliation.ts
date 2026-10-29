@@ -260,6 +260,17 @@ const sectionTitles = {
   biology: { en: "Biology", hi: "जीव विज्ञान" },
 } as const;
 
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value)) {
+      deepFreeze(nested);
+    }
+  }
+
+  return value;
+}
+
 export function buildPaperVersionFromImport(
   draft: ReconciledImport,
   metadata: {
@@ -318,7 +329,7 @@ export function buildPaperVersionFromImport(
     };
   });
 
-  return PaperVersionSchema.parse({
+  return deepFreeze(PaperVersionSchema.parse({
     schemaVersion: 1,
     id: metadata.id,
     paperId: metadata.paperId,
@@ -332,5 +343,5 @@ export function buildPaperVersionFromImport(
     publishedAt: metadata.publishedAt,
     sections,
     questions,
-  });
+  }));
 }
