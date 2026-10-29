@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "../features/imports/admin-import.css";
 @import "../features/exam/exam-workspace.css";
+@import "../features/analytics/analytics-workspace.css";
 
 :root {
   --canvas: #f4f7fb;

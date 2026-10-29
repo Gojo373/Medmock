@@ -35,11 +35,11 @@ Files: Create the Next.js/test configuration, global theme, layout, reusable UI 
 
 Interfaces: Produces shared Button, GlassPanel, BrandMark, ThemeToggle, locale helpers, navigation, and sample paper fixtures consumed by later tasks.
 
-- [ ] Write component tests for brand rendering, language switching, responsive navigation, and the paper library.
-- [ ] Run the tests and verify they fail because the application components do not exist.
-- [ ] Implement the minimal application foundation and public/student shells.
-- [ ] Run unit tests, lint, and type-check.
-- [ ] Commit the foundation.
+- [x] Write component tests for brand rendering, language switching, responsive navigation, and the paper library.
+- [x] Run the tests and verify they fail because the application components do not exist.
+- [x] Implement the minimal application foundation and public/student shells.
+- [x] Run unit tests, lint, and type-check.
+- [x] Commit the foundation.
 
 ### Task 2: Domain model, paper rules, and scoring engine
 
@@ -47,10 +47,10 @@ Files: Create domain schemas for papers, sections, questions, versions, attempts
 
 Interfaces: Produces Zod-backed PaperVersion, Question, Attempt, AttemptResult, scoreAttempt(), and buildAttemptAnalytics().
 
-- [ ] Write failing tests for negative marking, optional limits, multiple accepted answers, bonus/dropped questions, subject totals, and percentile eligibility.
-- [ ] Implement the minimum domain and scoring functions.
-- [ ] Run the focused and full suites.
-- [ ] Commit the domain engine.
+- [x] Write failing tests for negative marking, optional limits, multiple accepted answers, bonus/dropped questions, subject totals, and percentile eligibility.
+- [x] Implement the minimum domain and scoring functions.
+- [x] Run the focused and full suites.
+- [x] Commit the domain engine.
 
 ### Task 3: Reviewed OpenAI/Gemini import workflow
 
@@ -58,11 +58,11 @@ Files: Create a versioned extraction schema, provider interface, OpenAI and Gemi
 
 Interfaces: Produces ExtractionDocument, ExtractionProvider, reconcileExtractions(), review flags, and import status APIs.
 
-- [ ] Write failing tests for provider selection, field conflicts, confidence flags, missing keys, and publish validation.
-- [ ] Implement provider adapters using structured JSON output and injected clients.
-- [ ] Implement import/reconciliation services and admin screens.
-- [ ] Run unit tests, lint, and type-check.
-- [ ] Commit the reviewed import workflow.
+- [x] Write failing tests for provider selection, field conflicts, confidence flags, missing keys, and publish validation.
+- [x] Implement provider adapters using structured JSON output and injected clients.
+- [x] Implement import/reconciliation services and admin screens.
+- [x] Run unit tests, lint, and type-check.
+- [x] Commit the reviewed import workflow.
 
 ### Task 4: Mock and practice exam experience
 
@@ -70,11 +70,11 @@ Files: Create the exam reducer/store, timer, IndexedDB persistence adapter, ques
 
 Interfaces: Consumes PaperVersion and produces idempotent answer events and finalized AttemptResult records.
 
-- [ ] Write failing tests for answer transitions, practice reveal, mock concealment, optional limits, submit confirmation, expiry, and offline queue merging.
-- [ ] Implement the reducer and persistence behavior.
-- [ ] Implement responsive mock and practice interfaces.
-- [ ] Run focused tests, full tests, lint, and type-check.
-- [ ] Commit the exam experience.
+- [x] Write failing tests for answer transitions, practice reveal, mock concealment, optional limits, submit confirmation, expiry, and offline queue merging.
+- [x] Implement the reducer and persistence behavior.
+- [x] Implement responsive mock and practice interfaces.
+- [x] Run focused tests, full tests, lint, and type-check.
+- [x] Commit the exam experience.
 
 ### Task 5: Results, analytics, dashboard, and leaderboard
 
@@ -82,10 +82,12 @@ Files: Create result summaries, solution review, topic/subject/time analytics, s
 
 Interfaces: Consumes attempt events/results and produces personal analytics and ranked first-attempt entries.
 
-- [ ] Write failing tests for analytics, first-attempt ranking, privacy, provisional percentile, tie breakers, and integrity exclusions.
-- [ ] Implement analytics services and UI.
-- [ ] Run unit tests, lint, and type-check.
-- [ ] Commit results and rankings.
+- [x] Write failing tests for analytics, first-attempt ranking, privacy, provisional percentile, tie breakers, and integrity exclusions.
+- [x] Implement analytics services and UI.
+- [x] Run unit tests, lint, and type-check.
+- [x] Commit results and rankings.
+
+Completion note (2026-10-29): analytics services, bilingual results/dashboard UI, responsive styling, reusable demo data, privacy controls, and the `/dashboard` route are implemented. The full unit suite, lint, type-check, and production build passed before commit.
 
 ### Task 6: Persistence, security, observability, and production verification
 
