@@ -29,9 +29,9 @@ paper, answer key, image, and solution they upload or publish.
    npm run dev
    ```
 
-The API accepts a Supabase access token as `Authorization: Bearer <token>`.
-Import routes additionally require the authenticated user to have the admin
-role in Supabase auth app metadata and the profiles table.
+The API accepts either the Supabase session cookies established by the auth
+callback or an access token as `Authorization: Bearer <token>`. Import routes
+additionally require the authenticated profile to have `role = 'admin'`.
 
 ## Verification
 

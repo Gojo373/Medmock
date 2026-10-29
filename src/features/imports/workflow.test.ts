@@ -177,6 +177,62 @@ describe("provider selection and adapters", () => {
 });
 
 describe("reconcileExtractions", () => {
+  it("keeps provider nulls as reviewable missing metadata", () => {
+    const parsed = ExtractionDocumentSchema.parse({
+      ...payload(),
+      provider: "openai",
+      source: {
+        fileId: "file-openai",
+        fileName: "neet-2025.pdf",
+        mimeType: "application/pdf",
+      },
+      paper: {
+        ...payload().paper,
+        year: null,
+        durationMinutes: null,
+      },
+    });
+
+    const draft = reconcileExtractions([parsed]);
+
+    expect(draft.reviewFlags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "missing_field", path: "paper.year" }),
+        expect.objectContaining({
+          code: "missing_field",
+          path: "paper.durationMinutes",
+        }),
+      ]),
+    );
+  });
+
+  it("preserves provider-only questions and flags the missing counterpart", () => {
+    const geminiPayload = payload();
+    geminiPayload.paper.questions.push({
+      ...structuredClone(geminiPayload.paper.questions[0]),
+      sourceNumber: "2",
+      stem: localized("What is momentum?"),
+    });
+
+    const draft = reconcileExtractions([
+      document("openai"),
+      document("gemini", geminiPayload),
+    ]);
+
+    expect(draft.paper.questions.map((question) => question.sourceNumber)).toEqual([
+      "1",
+      "2",
+    ]);
+    expect(draft.reviewFlags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing_field",
+          path: "questions.2",
+        }),
+      ]),
+    );
+  });
+
   it("turns provider disagreements into review flags instead of silently choosing", () => {
     const openai = document("openai");
     const geminiPayload = payload();

@@ -110,12 +110,31 @@ const providers: Array<{
 export function AdminImportWorkspace() {
   const [provider, setProvider] = useState<ProviderSelection>("both");
   const [locale, setLocale] = useState<keyof typeof copy>("en");
-  const [paperFile, setPaperFile] = useState<string>();
+  const [paperFile, setPaperFile] = useState<File>();
+  const [importStatus, setImportStatus] = useState<"error" | "idle" | "queued" | "uploading">("idle");
   const paperInput = useRef<HTMLInputElement>(null);
   const currentCopy = copy[locale];
 
   function onPaperSelected(event: ChangeEvent<HTMLInputElement>) {
-    setPaperFile(event.target.files?.[0]?.name);
+    setPaperFile(event.target.files?.[0]);
+  }
+
+  async function startImport() {
+    if (!paperFile) return;
+    setImportStatus("uploading");
+    const body = new FormData();
+    body.set("paper", paperFile);
+    body.set("providerSelection", provider);
+
+    try {
+      const response = await fetch("/api/imports/upload", {
+        method: "POST",
+        body,
+      });
+      setImportStatus(response.ok ? "queued" : "error");
+    } catch {
+      setImportStatus("error");
+    }
   }
 
   return (
@@ -239,7 +258,7 @@ export function AdminImportWorkspace() {
                   <div className="paper-dropzone__icon">
                     {paperFile ? <CheckCircle2 aria-hidden="true" /> : <UploadCloud aria-hidden="true" />}
                   </div>
-                  <strong>{paperFile ?? currentCopy.uploadHint}</strong>
+                  <strong>{paperFile?.name ?? currentCopy.uploadHint}</strong>
                   <span>{paperFile ? "Ready for extraction" : currentCopy.uploadDetail}</span>
                   <Button onClick={() => paperInput.current?.click()} tone="secondary">
                     <Files aria-hidden="true" size={17} />
@@ -307,11 +326,18 @@ export function AdminImportWorkspace() {
 
               <div className="import-action-row">
                 <span><ShieldCheck aria-hidden="true" /> Files stay private until publication.</span>
-                <Button>
-                  {currentCopy.next}
+                <Button disabled={!paperFile || importStatus === "uploading"} onClick={startImport}>
+                  {importStatus === "uploading" ? "Uploading…" : currentCopy.next}
                   <ChevronRight aria-hidden="true" size={18} />
                 </Button>
               </div>
+              {importStatus !== "idle" && importStatus !== "uploading" && (
+                <p className="import-status" role="status">
+                  {importStatus === "queued"
+                    ? "Import queued for extraction and review."
+                    : "The import could not be queued. Please retry."}
+                </p>
+              )}
             </div>
 
             <aside className="import-review-rail">

@@ -21,14 +21,18 @@ function authHeaders(userId = "student-current") {
   };
 }
 
-function attemptRequest(idempotencyKey: string, userId = "student-current") {
+function attemptRequest(
+  idempotencyKey: string,
+  userId = "student-current",
+  mode: "mock" | "practice" = "mock",
+) {
   return new Request("http://localhost/api/attempts", {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders(userId) },
     body: JSON.stringify({
       paperVersionId: sampleExamPaper.id,
-      mode: "mock",
-      strict: true,
+      mode,
+      strict: mode === "mock",
       visibility: "public",
       idempotencyKey,
     }),
@@ -38,8 +42,9 @@ function attemptRequest(idempotencyKey: string, userId = "student-current") {
 async function startAttempt(
   idempotencyKey = crypto.randomUUID(),
   userId = "student-current",
+  mode: "mock" | "practice" = "mock",
 ) {
-  const response = await createAttempt(attemptRequest(idempotencyKey, userId));
+  const response = await createAttempt(attemptRequest(idempotencyKey, userId, mode));
   const body = (await response.json()) as CreatedAttempt;
   return { response, body };
 }
@@ -185,6 +190,58 @@ describe("attempt API contracts", () => {
 
     expect(eventResponse.status).toBe(404);
     expect(submitResponse.status).toBe(404);
+  });
+
+  it("rejects answers recorded after the server-authoritative deadline", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
+    const { body: attempt } = await startAttempt();
+    const lateEvent = {
+      ...answerEvent(attempt.attemptId),
+      occurredAt: Date.parse(attempt.deadlineAt) + 1,
+    };
+
+    const response = await appendEvents(
+      eventRequest(attempt.attemptId, [lateEvent]),
+      routeContext(attempt.attemptId),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "event_after_deadline",
+      eventId: lateEvent.id,
+    });
+  });
+
+  it("locks the first practice answer on the server", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
+    const { body: attempt } = await startAttempt(
+      crypto.randomUUID(),
+      "student-current",
+      "practice",
+    );
+    const first = answerEvent(attempt.attemptId);
+    const second = {
+      ...answerEvent(attempt.attemptId),
+      id: crypto.randomUUID(),
+      selectedOptionId: "A",
+      clientSequence: 2,
+      occurredAt: first.occurredAt + 1,
+    };
+
+    await appendEvents(
+      eventRequest(attempt.attemptId, [first]),
+      routeContext(attempt.attemptId),
+    );
+    const response = await appendEvents(
+      eventRequest(attempt.attemptId, [second]),
+      routeContext(attempt.attemptId),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "practice_answer_locked",
+      eventId: second.id,
+    });
   });
 
   it("returns the same finalized result when submission is replayed", async () => {

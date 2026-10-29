@@ -12,6 +12,13 @@ import {
 } from "@/features/imports/schema";
 
 const confidenceThreshold = 0.8;
+const confidenceFields = [
+  "stem",
+  "options",
+  "answerKey",
+  "translation",
+  "solution",
+] as const;
 
 type ReconciliationOptions = {
   officialAnswerKey?: Record<string, string[]>;
@@ -114,11 +121,8 @@ function addContentReviewFlags(paper: ExtractionPaper, flags: ReviewFlag[]) {
   }
 
   for (const question of paper.questions) {
-    const confidenceEntries = Object.entries(question.confidence) as Array<
-      [keyof typeof question.confidence, number | undefined]
-    >;
-
-    for (const [field, confidence] of confidenceEntries) {
+    for (const field of confidenceFields) {
+      const confidence = question.confidence[field];
       if (confidence === undefined || confidence < confidenceThreshold) {
         addFlag(
           flags,
@@ -186,6 +190,32 @@ export function reconcileExtractions(
       ),
     ),
   );
+
+  for (const sourceNumber of sourceNumbers) {
+    if (!paper.questions.some((question) => question.sourceNumber === sourceNumber)) {
+      const providerQuestion = documents
+        .map((document) => getQuestion(document, sourceNumber))
+        .find((question): question is ExtractionQuestion => Boolean(question));
+
+      if (providerQuestion) paper.questions.push(structuredClone(providerQuestion));
+    }
+
+    const missingProviders = documents
+      .filter((document) => !getQuestion(document, sourceNumber))
+      .map((document) => document.provider);
+
+    if (missingProviders.length > 0) {
+      addFlag(
+        flags,
+        makeFlag(
+          "missing_field",
+          "questions." + sourceNumber,
+          `Question is missing from provider output: ${missingProviders.join(", ")}.`,
+          "error",
+        ),
+      );
+    }
+  }
 
   for (const sourceNumber of sourceNumbers) {
     compareQuestionField(documents, sourceNumber, "stem.en", (question) => question.stem?.en, flags);

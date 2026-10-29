@@ -16,12 +16,13 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import type { PaperVersion } from "@/features/exam/domain";
+import { IndexedDbAttemptPersistence } from "@/features/exam/persistence";
 import {
   createExamSession,
   examSessionReducer,
@@ -42,6 +43,9 @@ export function ExamWorkspace({
 }) {
   const [locale, setLocale] = useState<"en" | "hi">("en");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("Saved locally");
+  const persistenceRef = useRef<IndexedDbAttemptPersistence | undefined>(undefined);
+  const expirySubmissionRef = useRef(false);
   const [state, dispatch] = useReducer(
     examSessionReducer,
     null,
@@ -65,6 +69,138 @@ export function ExamWorkspace({
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "test") return;
+    let cancelled = false;
+
+    async function restore() {
+      const storageKey = `medmock:idempotency:${paper.id}:${mode}`;
+      let idempotencyKey = window.localStorage.getItem(storageKey);
+      if (!idempotencyKey) {
+        idempotencyKey = crypto.randomUUID();
+        window.localStorage.setItem(storageKey, idempotencyKey);
+      }
+
+      const response = await fetch("/api/attempts", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          paperVersionId: paper.id,
+          mode,
+          strict: mode === "mock",
+          visibility: "public",
+          idempotencyKey,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Attempt creation failed.");
+      const created = await response.json();
+      const persistence = new IndexedDbAttemptPersistence();
+      persistenceRef.current = persistence;
+      const saved = await persistence.loadSession(created.attemptId);
+      const restored = saved ?? createExamSession({
+        attemptId: created.attemptId,
+        paper,
+        mode,
+        nowMs: Date.now(),
+        deadlineAtMs: Date.parse(created.deadlineAt),
+      });
+
+      if (!cancelled) {
+        dispatch({ type: "RESTORE_SESSION", state: restored });
+        setSyncMessage("Saved and synchronized");
+      }
+    }
+
+    restore().catch(() => {
+      if (!cancelled) setSyncMessage("Offline · saved on this device");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, paper]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "test" || !persistenceRef.current) return;
+    const persistence = persistenceRef.current;
+
+    persistence.saveSession(state).catch(() => setSyncMessage("Local save failed"));
+    persistence.queueEvents(state.eventQueue).catch(() => setSyncMessage("Offline · retrying"));
+
+    if (state.eventQueue.length === 0 || state.attemptId.startsWith("local-")) return;
+
+    fetch(`/api/attempts/${state.attemptId}/events`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events: state.eventQueue }),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Sync failed");
+        const result = await response.json();
+        const eventIds = [...result.acceptedEventIds, ...result.duplicateEventIds];
+        await persistence.markEventsSynced(eventIds);
+        dispatch({ type: "ACK_EVENTS", eventIds });
+        setSyncMessage("Saved and synchronized");
+      })
+      .catch(() => setSyncMessage("Offline · retrying"));
+  }, [state]);
+
+  const confirmSubmission = useCallback(async () => {
+    if (state.attemptId.startsWith("local-")) {
+      dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.now() });
+      return;
+    }
+
+    setSyncMessage("Finalizing securely…");
+    if (state.eventQueue.length > 0) {
+      const eventResponse = await fetch(`/api/attempts/${state.attemptId}/events`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: state.eventQueue }),
+      });
+
+      if (!eventResponse.ok) {
+        setSyncMessage("Submission waiting for answer sync");
+        return;
+      }
+    }
+
+    const response = await fetch(`/api/attempts/${state.attemptId}/submit`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: `submit:${state.attemptId}` }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.parse(result.submittedAt) });
+      setSyncMessage("Submitted and scored");
+    } else {
+      setSyncMessage("Submission failed · retry safely");
+    }
+  }, [state.attemptId, state.eventQueue]);
+
+  useEffect(() => {
+    if (
+      process.env.NODE_ENV === "test" ||
+      state.status !== "submitted" ||
+      state.submissionReason !== "expired" ||
+      state.attemptId.startsWith("local-") ||
+      expirySubmissionRef.current
+    ) return;
+
+    expirySubmissionRef.current = true;
+    confirmSubmission().catch(() => {
+      expirySubmissionRef.current = false;
+      setSyncMessage("Expiry submission will retry");
+    });
+  }, [state.status, state.submissionReason, state.attemptId, confirmSubmission]);
 
   const currentQuestion = paper.questions.find(
     (question) => question.id === state.currentQuestionId,
@@ -332,7 +468,7 @@ export function ExamWorkspace({
 
           <div className="sync-status">
             <Cloud aria-hidden="true" />
-            <span><strong>Saved locally</strong><small>{state.eventQueue.length} events ready to sync</small></span>
+            <span><strong>{syncMessage}</strong><small>{state.eventQueue.length} events ready to sync</small></span>
           </div>
 
           <Button className="submit-test-button" onClick={() => dispatch({ type: "REQUEST_SUBMIT" })} tone="secondary">
@@ -344,15 +480,21 @@ export function ExamWorkspace({
 
       {state.status === "submit_pending" && (
         <div className="exam-modal-backdrop" role="presentation">
-          <section aria-modal="true" className="exam-submit-modal" role="dialog">
+          <section
+            aria-describedby="submit-attempt-description"
+            aria-labelledby="submit-attempt-title"
+            aria-modal="true"
+            className="exam-submit-modal"
+            role="dialog"
+          >
             <div className="exam-submit-modal__icon">
               <Flag aria-hidden="true" />
             </div>
-            <h2>Submit this attempt?</h2>
-            <p>You answered {answeredCount} of {paper.questions.length} questions. Mock answers cannot be changed after submission.</p>
+            <h2 id="submit-attempt-title">Submit this attempt?</h2>
+            <p id="submit-attempt-description">You answered {answeredCount} of {paper.questions.length} questions. Mock answers cannot be changed after submission.</p>
             <div>
               <Button onClick={() => dispatch({ type: "CANCEL_SUBMIT" })} tone="ghost">Keep reviewing</Button>
-              <Button onClick={() => dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.now() })}>
+              <Button autoFocus onClick={confirmSubmission}>
                 Confirm submission
               </Button>
             </div>
@@ -362,11 +504,16 @@ export function ExamWorkspace({
 
       {state.status === "submitted" && (
         <div className="exam-modal-backdrop">
-          <section className="exam-submit-modal">
+          <section
+            aria-labelledby="submission-complete-title"
+            aria-modal="true"
+            className="exam-submit-modal"
+            role="dialog"
+          >
             <div className="exam-submit-modal__icon is-success"><Check aria-hidden="true" /></div>
-            <h2>{state.submissionReason === "expired" ? "Time is up" : "Attempt submitted"}</h2>
+            <h2 id="submission-complete-title">{state.submissionReason === "expired" ? "Time is up" : "Attempt submitted"}</h2>
             <p>Your answers are safely queued for final scoring and synchronization.</p>
-            <Button>View results</Button>
+            <Link className="button button--primary" href="/dashboard">View results</Link>
           </section>
         </div>
       )}

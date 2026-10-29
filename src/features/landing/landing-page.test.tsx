@@ -79,7 +79,10 @@ describe("AuthPanel", () => {
       </LocaleProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Continue with Google" })).toHaveAttribute(
+      "href",
+      "/api/auth/google",
+    );
     expect(screen.getByRole("textbox", { name: "Email address" })).toHaveAttribute(
       "type",
       "email",

@@ -55,6 +55,8 @@ export type ExamSessionState = {
 };
 
 export type ExamSessionAction =
+  | { type: "RESTORE_SESSION"; state: ExamSessionState }
+  | { type: "ACK_EVENTS"; eventIds: string[] }
   | { type: "NAVIGATE"; questionId: string }
   | { type: "TOGGLE_REVIEW"; questionId: string }
   | {
@@ -178,6 +180,16 @@ export function examSessionReducer(
   state: ExamSessionState,
   action: ExamSessionAction,
 ): ExamSessionState {
+  if (action.type === "RESTORE_SESSION") return action.state;
+
+  if (action.type === "ACK_EVENTS") {
+    const acknowledged = new Set(action.eventIds);
+    return {
+      ...state,
+      eventQueue: state.eventQueue.filter((event) => !acknowledged.has(event.id)),
+    };
+  }
+
   if (action.type === "TICK") {
     const remainingMs = getRemainingTimeMs(state.deadlineAtMs, action.nowMs);
 

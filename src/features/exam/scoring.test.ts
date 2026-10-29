@@ -107,6 +107,28 @@ function attempt(answers: AnswerInput[], overrides: Record<string, unknown> = {}
 }
 
 describe("scoreAttempt", () => {
+  it("rejects questions omitted from their declared scoring section", () => {
+    const input = {
+      schemaVersion: 1,
+      id: "version-orphan",
+      paperId: "paper-orphan",
+      revision: 1,
+      status: "published",
+      title: localized("Orphan paper"),
+      durationMinutes: 180,
+      publishedAt: "2026-10-28T06:00:00.000Z",
+      sections: [{
+        id: "physics",
+        subject: "physics",
+        title: localized("Physics"),
+        questionIds: [],
+      }],
+      questions: [question({ id: "p1", sectionId: "physics", subject: "physics" })],
+    };
+
+    expect(PaperVersionSchema.safeParse(input).success).toBe(false);
+  });
+
   it("applies positive, negative, and unattempted NEET marks", () => {
     const version = paper([
       question({ id: "p1", sectionId: "physics", subject: "physics" }),

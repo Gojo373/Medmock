@@ -3,13 +3,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { logServerEvent } from "@/lib/server/logger";
 import { createSupabaseRouteClient } from "@/lib/supabase/route-client";
 
-function safeNext(value: string | null) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+function safeNext(value: string | null, origin: string) {
+  if (!value) return "/dashboard";
+
+  try {
+    const resolved = new URL(value, origin);
+    return resolved.origin === origin && value.startsWith("/")
+      ? resolved.pathname + resolved.search + resolved.hash
+      : "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
 }
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
-  const next = safeNext(request.nextUrl.searchParams.get("next"));
+  const next = safeNext(
+    request.nextUrl.searchParams.get("next"),
+    request.nextUrl.origin,
+  );
 
   if (!code) {
     return NextResponse.redirect(new URL("/sign-in?error=callback", request.url));

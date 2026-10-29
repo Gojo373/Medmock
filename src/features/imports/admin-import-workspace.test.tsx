@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminImportWorkspace } from "@/features/imports/admin-import-workspace";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportWorkspace", () => {
   it("presents a guided paper upload and review workflow", () => {
@@ -28,5 +30,31 @@ describe("AdminImportWorkspace", () => {
 
     expect(openai).toHaveAttribute("aria-pressed", "true");
     expect(both).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("uploads the selected source and starts a durable import job", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ importId: "import-1", status: "uploaded" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminImportWorkspace />);
+
+    await user.upload(
+      screen.getByLabelText("Paper file"),
+      new File(["paper"], "neet.pdf", { type: "application/pdf" }),
+    );
+    await user.click(screen.getByRole("button", { name: /start reviewed extraction/i }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/imports/upload",
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Import queued for extraction and review.",
+    );
   });
 });

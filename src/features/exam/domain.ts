@@ -162,6 +162,20 @@ export const PaperVersionSchema = z
           message: "Every question must reference an existing section.",
         });
       }
+
+      const occurrences = paper.sections.reduce(
+        (count, section) =>
+          count + section.questionIds.filter((id) => id === question.id).length,
+        0,
+      );
+
+      if (occurrences !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["questions"],
+          message: "Every question must appear exactly once in its declared section.",
+        });
+      }
     }
 
     if (paper.status === "published" && !paper.publishedAt) {

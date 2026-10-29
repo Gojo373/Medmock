@@ -49,8 +49,8 @@ export const ExtractionQuestionSchema = z
 export const ExtractionPaperSchema = z
   .object({
     title: PartialLocalizedTextSchema.optional(),
-    year: z.number().int().min(2000).max(2200).optional(),
-    durationMinutes: z.number().int().positive().optional(),
+    year: z.number().int().min(2000).max(2200).nullable().optional(),
+    durationMinutes: z.number().int().positive().nullable().optional(),
     questions: z.array(ExtractionQuestionSchema).default([]),
   })
   .strict();
@@ -129,7 +129,25 @@ export const extractionResponseJsonSchema = {
         durationMinutes: { type: ["number", "null"] },
         questions: {
           type: "array",
-          items: { type: "object" },
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "sourceNumber", "sectionId", "subject", "topic", "stem",
+              "options", "acceptedOptionIds", "solution", "confidence",
+            ],
+            properties: {
+              sourceNumber: { type: "string" },
+              sectionId: { type: ["string", "null"] },
+              subject: { type: ["string", "null"], enum: ["physics", "chemistry", "biology", null] },
+              topic: { type: ["string", "null"] },
+              stem: { type: ["object", "null"] },
+              options: { type: "array", items: { type: "object" } },
+              acceptedOptionIds: { type: "array", items: { type: "string" } },
+              solution: { type: ["object", "null"] },
+              confidence: { type: "object" },
+            },
+          },
         },
       },
     },

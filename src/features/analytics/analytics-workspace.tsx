@@ -124,14 +124,16 @@ export function AnalyticsShell({
   eligibleAttemptCount,
   history,
   leaderboard,
+  initialHideName = false,
 }: {
   currentAttempt: AttemptHistoryItem;
   eligibleAttemptCount: number;
   history: AttemptHistoryItem[];
   leaderboard: LeaderboardSnapshot;
+  initialHideName?: boolean;
 }) {
   const [locale, setLocale] = useState<Locale>("en");
-  const [hideName, setHideName] = useState(false);
+  const [hideName, setHideName] = useState(initialHideName);
   const text = copy[locale];
   const analytics = useMemo(
     () =>
@@ -350,7 +352,16 @@ export function AnalyticsShell({
               <input
                 aria-label={text.privacy}
                 checked={hideName}
-                onChange={(event) => setHideName(event.target.checked)}
+                onChange={(event) => {
+                  const nextValue = event.target.checked;
+                  setHideName(nextValue);
+                  fetch("/api/profile/privacy", {
+                    method: "PATCH",
+                    credentials: "same-origin",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ hideDisplayName: nextValue }),
+                  }).catch(() => undefined);
+                }}
                 type="checkbox"
               />
               <span><LockKeyhole aria-hidden="true" /> {text.privacy}</span>

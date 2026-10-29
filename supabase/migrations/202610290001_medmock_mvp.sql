@@ -187,8 +187,8 @@ for select to anon, authenticated using (true);
 create policy papers_admin_all on public.papers
 for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
-create policy published_versions_read on public.paper_versions
-for select to anon, authenticated using (status = 'published' or public.is_admin());
+create policy published_versions_admin_read on public.paper_versions
+for select to authenticated using (public.is_admin());
 create policy paper_versions_admin_insert on public.paper_versions
 for insert to authenticated with check (public.is_admin());
 create policy paper_versions_admin_update on public.paper_versions
@@ -203,27 +203,156 @@ for all to authenticated using (public.is_admin()) with check (public.is_admin()
 
 create policy attempts_read_own on public.attempts
 for select to authenticated using (user_id = auth.uid());
-create policy attempts_insert_own on public.attempts
-for insert to authenticated with check (user_id = auth.uid());
-create policy attempts_update_own on public.attempts
-for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy answer_events_read_own on public.answer_events
 for select to authenticated using (
   exists (select 1 from public.attempts where attempts.id = attempt_id and attempts.user_id = auth.uid())
 );
-create policy answer_events_insert_own on public.answer_events
-for insert to authenticated with check (
-  exists (
-    select 1 from public.attempts
-    where attempts.id = attempt_id
-      and attempts.user_id = auth.uid()
-      and attempts.submitted_at is null
-  )
-);
-
 create policy attempt_results_read_own on public.attempt_results
 for select to authenticated using (user_id = auth.uid());
+
+revoke insert, update, delete on public.attempts from anon, authenticated;
+revoke insert, update, delete on public.answer_events from anon, authenticated;
+revoke insert, update, delete on public.attempt_results from anon, authenticated;
+
+create or replace function public.append_attempt_events(
+  p_attempt_id uuid,
+  p_user_id uuid,
+  p_events jsonb
+)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  attempt_row public.attempts%rowtype;
+  event_value jsonb;
+  existing public.answer_events%rowtype;
+  accepted_ids jsonb := '[]'::jsonb;
+  duplicate_ids jsonb := '[]'::jsonb;
+  event_count integer;
+begin
+  select * into attempt_row
+  from public.attempts
+  where id = p_attempt_id and user_id = p_user_id
+  for update;
+
+  if not found then return jsonb_build_object('error', 'attempt_not_found'); end if;
+  if attempt_row.submitted_at is not null then
+    return jsonb_build_object('error', 'attempt_submitted');
+  end if;
+
+  for event_value in select value from jsonb_array_elements(p_events)
+  loop
+    if to_timestamp((event_value ->> 'occurredAt')::double precision / 1000.0) > attempt_row.deadline_at then
+      return jsonb_build_object('error', 'event_after_deadline', 'eventId', event_value ->> 'id');
+    end if;
+
+    select * into existing from public.answer_events
+    where attempt_id = p_attempt_id and id = event_value ->> 'id';
+
+    if found then
+      if existing.question_id <> event_value ->> 'questionId'
+        or existing.event_type <> event_value ->> 'type'
+        or coalesce(existing.selected_option_id, '') <> coalesce(event_value ->> 'selectedOptionId', '')
+        or existing.occurred_at_ms <> (event_value ->> 'occurredAt')::bigint
+        or existing.client_sequence <> (event_value ->> 'clientSequence')::integer then
+        return jsonb_build_object('error', 'answer_event_conflict', 'eventId', event_value ->> 'id');
+      end if;
+      duplicate_ids := duplicate_ids || jsonb_build_array(event_value ->> 'id');
+    else
+      if attempt_row.mode = 'practice' and exists (
+        select 1 from public.answer_events
+        where attempt_id = p_attempt_id
+          and question_id = event_value ->> 'questionId'
+          and event_type = 'answer_selected'
+      ) then
+        return jsonb_build_object('error', 'practice_answer_locked', 'eventId', event_value ->> 'id');
+      end if;
+
+      insert into public.answer_events (
+        attempt_id, id, question_id, event_type, selected_option_id,
+        occurred_at_ms, client_sequence
+      ) values (
+        p_attempt_id,
+        event_value ->> 'id',
+        event_value ->> 'questionId',
+        event_value ->> 'type',
+        event_value ->> 'selectedOptionId',
+        (event_value ->> 'occurredAt')::bigint,
+        (event_value ->> 'clientSequence')::integer
+      );
+      accepted_ids := accepted_ids || jsonb_build_array(event_value ->> 'id');
+    end if;
+  end loop;
+
+  select count(*) into event_count from public.answer_events where attempt_id = p_attempt_id;
+  return jsonb_build_object(
+    'acceptedEventIds', accepted_ids,
+    'duplicateEventIds', duplicate_ids,
+    'eventCount', event_count
+  );
+end;
+$$;
+
+create or replace function public.finalize_attempt(
+  p_attempt_id uuid,
+  p_user_id uuid,
+  p_expected_event_count integer,
+  p_submitted_at timestamptz,
+  p_submission_reason text,
+  p_response jsonb,
+  p_result jsonb,
+  p_score integer,
+  p_max_score integer,
+  p_correct integer,
+  p_incorrect integer
+)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  attempt_row public.attempts%rowtype;
+  actual_event_count integer;
+begin
+  select * into attempt_row
+  from public.attempts
+  where id = p_attempt_id and user_id = p_user_id
+  for update;
+
+  if not found then return jsonb_build_object('error', 'attempt_not_found'); end if;
+  if attempt_row.submitted_response is not null then
+    return jsonb_build_object('response', attempt_row.submitted_response);
+  end if;
+
+  select count(*) into actual_event_count
+  from public.answer_events where attempt_id = p_attempt_id;
+  if actual_event_count <> p_expected_event_count then
+    return jsonb_build_object('error', 'event_count_changed');
+  end if;
+
+  insert into public.attempt_results (
+    attempt_id, user_id, paper_version_id, score, max_score, correct, incorrect, result
+  ) values (
+    p_attempt_id, p_user_id, attempt_row.paper_version_id,
+    p_score, p_max_score, p_correct, p_incorrect, p_result
+  );
+
+  update public.attempts set
+    submitted_at = p_submitted_at,
+    submission_reason = p_submission_reason,
+    submitted_response = p_response
+  where id = p_attempt_id;
+
+  return jsonb_build_object('response', p_response);
+end;
+$$;
+
+revoke all on function public.append_attempt_events(uuid, uuid, jsonb) from public;
+revoke all on function public.finalize_attempt(uuid, uuid, integer, timestamptz, text, jsonb, jsonb, integer, integer, integer, integer) from public;
+grant execute on function public.append_attempt_events(uuid, uuid, jsonb) to service_role;
+grant execute on function public.finalize_attempt(uuid, uuid, integer, timestamptz, text, jsonb, jsonb, integer, integer, integer, integer) to service_role;
 
 create or replace function public.get_leaderboard(p_paper_version_id text)
 returns table (

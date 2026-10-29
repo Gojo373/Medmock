@@ -1,4 +1,5 @@
 import {
+  AppendAnswerEventsResponseSchema,
   CreateAttemptResponseSchema,
   SubmitAttemptResponseSchema,
   type AnswerEventContract,
@@ -33,13 +34,20 @@ type AppendAttemptEventsResult =
         | "attempt_not_found"
         | "attempt_submitted"
         | "invalid_answer_event"
-        | "answer_event_conflict";
+        | "answer_event_conflict"
+        | "event_after_deadline"
+        | "practice_answer_locked";
       eventId?: string;
     };
 
 type SubmitAttemptResult =
   | { ok: true; response: SubmitAttemptResponse }
   | { ok: false; error: "attempt_not_found" };
+
+type AppendAttemptError = Extract<
+  AppendAttemptEventsResult,
+  { ok: false }
+>["error"];
 
 type AttemptRecord = {
   attempt: Attempt;
@@ -196,10 +204,28 @@ function appendMemoryAttemptEvents(
   if (record.submittedResponse) return { ok: false, error: "attempt_submitted" };
 
   const knownEvents = new Map(record.events.map((event) => [event.id, event]));
+  const lockedPracticeQuestions = new Set(
+    record.attempt.mode === "practice"
+      ? record.events
+          .filter((event) => event.type === "answer_selected")
+          .map((event) => event.questionId)
+      : [],
+  );
   const acceptedEvents: AnswerEventContract[] = [];
   const duplicateEventIds: string[] = [];
 
   for (const event of events) {
+    if (event.occurredAt > Date.parse(record.attempt.deadlineAt!)) {
+      return { ok: false, error: "event_after_deadline", eventId: event.id };
+    }
+
+    if (
+      record.attempt.mode === "practice" &&
+      lockedPracticeQuestions.has(event.questionId)
+    ) {
+      return { ok: false, error: "practice_answer_locked", eventId: event.id };
+    }
+
     if (event.attemptId !== attemptId || !eventBelongsToPaper(event, record)) {
       return { ok: false, error: "invalid_answer_event", eventId: event.id };
     }
@@ -217,6 +243,9 @@ function appendMemoryAttemptEvents(
 
     knownEvents.set(event.id, event);
     acceptedEvents.push(event);
+    if (record.attempt.mode === "practice" && event.type === "answer_selected") {
+      lockedPracticeQuestions.add(event.questionId);
+    }
   }
 
   record.events = mergeAnswerEvents(record.events, acceptedEvents);
@@ -311,6 +340,7 @@ async function createPersistentAttemptRecord(
   request: CreateAttemptRequest,
   userId: string,
   nowMs: number,
+  allocationRetry = 0,
 ): Promise<CreateAttemptResult> {
   const client = createSupabaseAdminClient();
   const { data: paperRow, error: paperError } = await client
@@ -393,6 +423,15 @@ async function createPersistentAttemptRecord(
         };
       }
 
+      if (!replay && allocationRetry < 3) {
+        return createPersistentAttemptRecord(
+          request,
+          userId,
+          nowMs,
+          allocationRetry + 1,
+        );
+      }
+
       return { ok: false, error: "idempotency_conflict" };
     }
 
@@ -471,71 +510,54 @@ async function appendPersistentAttemptEvents(
     attempt: { userId },
     paper: loaded.paper,
   } as AttemptRecord;
-  const ids = events.map((event) => event.id);
-  const { data: existingRows, error: existingError } = await loaded.client
-    .from("answer_events")
-    .select("*")
-    .eq("attempt_id", attemptId)
-    .in("id", ids);
-
-  if (existingError) throw existingError;
-
-  const existing = new Map(
-    (existingRows ?? []).map((row) => [row.id as string, eventFromRow(row)]),
-  );
-  const accepted: AnswerEventContract[] = [];
-  const duplicateEventIds: string[] = [];
 
   for (const event of events) {
     if (event.attemptId !== attemptId || !eventBelongsToPaper(event, record)) {
       return { ok: false, error: "invalid_answer_event", eventId: event.id };
     }
-
-    const known = existing.get(event.id);
-    if (known) {
-      if (!sameEvent(known, event)) {
-        return { ok: false, error: "answer_event_conflict", eventId: event.id };
-      }
-
-      duplicateEventIds.push(event.id);
-    } else {
-      accepted.push(event);
-    }
   }
 
-  if (accepted.length > 0) {
-    const { error: insertError } = await loaded.client
+  const { data, error } = await loaded.client.rpc("append_attempt_events", {
+    p_attempt_id: attemptId,
+    p_user_id: userId,
+    p_events: events,
+  });
+
+  if (error) throw error;
+  const result = data as Record<string, unknown>;
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error as AppendAttemptError,
+      ...(result.eventId ? { eventId: String(result.eventId) } : {}),
+    };
+  }
+
+  return { ok: true, response: AppendAnswerEventsResponseSchema.parse(result) };
+}
+
+async function loadAllPersistentEvents(
+  client: ReturnType<typeof createSupabaseAdminClient>,
+  attemptId: string,
+) {
+  const rows: Record<string, unknown>[] = [];
+  const pageSize = 1_000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await client
       .from("answer_events")
-      .insert(
-        accepted.map((event) => ({
-          id: event.id,
-          attempt_id: attemptId,
-          question_id: event.questionId,
-          event_type: event.type,
-          selected_option_id: event.selectedOptionId ?? null,
-          occurred_at_ms: event.occurredAt,
-          client_sequence: event.clientSequence,
-        })),
-      );
+      .select("*")
+      .eq("attempt_id", attemptId)
+      .order("client_sequence", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
 
-    if (insertError) throw insertError;
+    if (error) throw error;
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    if (!data || data.length < pageSize) break;
   }
 
-  const { count, error: countError } = await loaded.client
-    .from("answer_events")
-    .select("id", { count: "exact", head: true })
-    .eq("attempt_id", attemptId);
-
-  if (countError) throw countError;
-
-  return {
-    ok: true,
-    response: {
-      acceptedEventIds: accepted.map((event) => event.id),
-      duplicateEventIds,
-      eventCount: count ?? 0,
-    },
-  };
+  return rows.map(eventFromRow);
 }
 
 async function submitPersistentAttemptRecord(
@@ -555,15 +577,7 @@ async function submitPersistentAttemptRecord(
     };
   }
 
-  const { data: eventRows, error: eventError } = await loaded.client
-    .from("answer_events")
-    .select("*")
-    .eq("attempt_id", attemptId)
-    .order("client_sequence", { ascending: true });
-
-  if (eventError) throw eventError;
-
-  const events = (eventRows ?? []).map(eventFromRow);
+  const events = await loadAllPersistentEvents(loaded.client, attemptId);
   const materialized = materializeAnswers(events);
   const submittedAt = new Date(nowMs).toISOString();
   const submissionReason =
@@ -600,54 +614,36 @@ async function submitPersistentAttemptRecord(
     submittedAt,
     result,
   });
-  const { data: updated, error: updateError } = await loaded.client
-    .from("attempts")
-    .update({
-      submitted_at: submittedAt,
-      submission_reason: submissionReason,
-      submitted_response: response,
-    })
-    .eq("id", attemptId)
-    .eq("user_id", userId)
-    .is("submitted_at", null)
-    .select("id")
-    .maybeSingle();
+  const { data: finalized, error: finalizeError } = await loaded.client.rpc(
+    "finalize_attempt",
+    {
+      p_attempt_id: attemptId,
+      p_user_id: userId,
+      p_expected_event_count: events.length,
+      p_submitted_at: submittedAt,
+      p_submission_reason: submissionReason,
+      p_response: response,
+      p_result: result,
+      p_score: result.score,
+      p_max_score: result.maxScore,
+      p_correct: result.correct,
+      p_incorrect: result.incorrect,
+    },
+  );
 
-  if (updateError) throw updateError;
-  if (!updated) {
-    const { data: replay, error: replayError } = await loaded.client
-      .from("attempts")
-      .select("submitted_response")
-      .eq("id", attemptId)
-      .eq("user_id", userId)
-      .single();
-
-    if (replayError) throw replayError;
-    return {
-      ok: true,
-      response: SubmitAttemptResponseSchema.parse(replay.submitted_response),
-    };
+  if (finalizeError) throw finalizeError;
+  const finalizedResult = finalized as Record<string, unknown>;
+  if (finalizedResult.error === "event_count_changed") {
+    return submitPersistentAttemptRecord(attemptId, userId, nowMs);
+  }
+  if (finalizedResult.error === "attempt_not_found") {
+    return { ok: false, error: "attempt_not_found" };
   }
 
-  const { error: resultError } = await loaded.client
-    .from("attempt_results")
-    .upsert(
-      {
-        attempt_id: attemptId,
-        user_id: userId,
-        paper_version_id: loaded.paper.id,
-        score: result.score,
-        max_score: result.maxScore,
-        correct: result.correct,
-        incorrect: result.incorrect,
-        result,
-      },
-      { onConflict: "attempt_id" },
-    );
-
-  if (resultError) throw resultError;
-
-  return { ok: true, response };
+  return {
+    ok: true,
+    response: SubmitAttemptResponseSchema.parse(finalizedResult.response),
+  };
 }
 
 export async function createAttemptRecord(
