@@ -4,10 +4,6 @@ import { expect, test } from "@playwright/test";
 const routes = [
   { path: "/", name: "landing" },
   { path: "/sign-in", name: "sign in" },
-  { path: "/admin/imports", name: "admin import review" },
-  { path: "/papers/neet-2025-demo/mock", name: "strict mock" },
-  { path: "/papers/neet-2025-demo/practice", name: "practice" },
-  { path: "/dashboard", name: "results dashboard" },
 ];
 
 for (const route of routes) {
@@ -36,16 +32,41 @@ test("student-facing screens have no serious automated accessibility violations"
   }
 });
 
-test("local leaderboard privacy hides the current display name", async ({ page }) => {
-  await page.goto("/dashboard");
-  await expect(page.getByRole("row", { name: /You/ })).toBeVisible();
+for (const path of ["/dashboard", "/admin/imports", "/papers/neet-2025-demo/mock"]) {
+  test(`${path} requires authentication instead of passing on redirected content`, async ({ page }) => {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/sign-in\?next=/);
+  });
+}
 
-  await page
-    .getByRole("checkbox", { name: "Hide my name on public rankings" })
-    .check();
+test("authenticated publication, attempt, and privacy journey", async ({ browser }) => {
+  const storageState = process.env.E2E_AUTH_STORAGE_STATE;
+  const paperId = process.env.E2E_PUBLISHED_PAPER_ID;
+  const versionId = process.env.E2E_PUBLISHED_VERSION_ID;
+  test.skip(
+    !storageState || !paperId || !versionId,
+    "Requires Linux/staging authenticated storage state and a published paper fixture.",
+  );
+
+  const context = await browser.newContext({ storageState });
+  const page = await context.newPage();
+  await page.goto(`/papers/${paperId}?version=${versionId}`);
+  await expect(page.getByRole("link", { name: /start strict mock/i })).toBeVisible();
+  await page.getByRole("link", { name: /start strict mock/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/papers/${paperId}/mock\\?version=${versionId}`));
+  await expect(page.getByText(/answers concealed/i)).toBeVisible();
+
+  await page.goto("/dashboard");
+  await expect(page).not.toHaveURL(/\/sign-in/);
+  const privacy = page.getByRole("checkbox", {
+    name: "Hide my name on public rankings",
+  });
+  await expect(privacy).toBeVisible();
+
+  await privacy.check();
 
   await expect(
     page.getByRole("row", { name: /Anonymous aspirant/ }),
   ).toBeVisible();
-  await expect(page.getByRole("row", { name: /You/ })).toHaveCount(0);
+  await context.close();
 });

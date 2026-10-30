@@ -4,6 +4,7 @@ import {
 } from "@/features/exam/domain";
 import {
   ReconciledImportSchema,
+  ExtractionPaperSchema,
   type ExtractionDocument,
   type ExtractionPaper,
   type ExtractionQuestion,
@@ -88,8 +89,8 @@ function collectMissingPaths(paper: ExtractionPaper) {
     if (question.options.length < 2) paths.push(base + ".options");
 
     for (const option of question.options) {
-      if (!option.text.en) paths.push(base + ".options." + option.id + ".text.en");
-      if (!option.text.hi) paths.push(base + ".options." + option.id + ".text.hi");
+      if (!option.text?.en) paths.push(base + ".options." + option.id + ".text.en");
+      if (!option.text?.hi) paths.push(base + ".options." + option.id + ".text.hi");
     }
 
     if (question.acceptedOptionIds.length === 0) {
@@ -167,6 +168,29 @@ function compareQuestionField(
   }
 }
 
+function compareProviderField(
+  documents: ExtractionDocument[],
+  path: string,
+  value: (document: ExtractionDocument) => unknown,
+  flags: ReviewFlag[],
+) {
+  const providerValues = Object.fromEntries(
+    documents.map((document) => [document.provider, value(document)]),
+  );
+  if (new Set(Object.values(providerValues).map(stableValue)).size > 1) {
+    addFlag(
+      flags,
+      makeFlag(
+        "provider_conflict",
+        path,
+        "Providers disagree on this field; choose the reviewed value.",
+        "warning",
+        providerValues,
+      ),
+    );
+  }
+}
+
 export function reconcileExtractions(
   documents: ExtractionDocument[],
   options: ReconciliationOptions = {},
@@ -191,6 +215,56 @@ export function reconcileExtractions(
       ),
     ),
   );
+
+  compareProviderField(documents, "paper.title.en", (document) => document.paper.title?.en, flags);
+  compareProviderField(documents, "paper.title.hi", (document) => document.paper.title?.hi, flags);
+  compareProviderField(documents, "paper.year", (document) => document.paper.year, flags);
+  compareProviderField(
+    documents,
+    "paper.durationMinutes",
+    (document) => document.paper.durationMinutes,
+    flags,
+  );
+
+  const sectionIds = Array.from(
+    new Set(
+      documents.flatMap((document) =>
+        document.paper.sections.map((section) => section.id),
+      ),
+    ),
+  );
+  for (const sectionId of sectionIds) {
+    const sectionFrom = (document: ExtractionDocument) =>
+      document.paper.sections.find((section) => section.id === sectionId);
+    const missingProviders = documents
+      .filter((document) => !sectionFrom(document))
+      .map((document) => document.provider);
+    if (missingProviders.length > 0) {
+      addFlag(
+        flags,
+        makeFlag(
+          "missing_field",
+          `paper.sections.${sectionId}`,
+          `Section is missing from provider output: ${missingProviders.join(", ")}.`,
+          "error",
+        ),
+      );
+    }
+    for (const [field, getter] of [
+      ["subject", (document: ExtractionDocument) => sectionFrom(document)?.subject],
+      ["title.en", (document: ExtractionDocument) => sectionFrom(document)?.title.en],
+      ["title.hi", (document: ExtractionDocument) => sectionFrom(document)?.title.hi],
+      ["questionNumbers", (document: ExtractionDocument) => sectionFrom(document)?.questionNumbers],
+      ["selectionLimit", (document: ExtractionDocument) => sectionFrom(document)?.selectionLimit ?? null],
+    ] as const) {
+      compareProviderField(
+        documents,
+        `paper.sections.${sectionId}.${field}`,
+        getter,
+        flags,
+      );
+    }
+  }
 
   for (const sourceNumber of sourceNumbers) {
     if (!paper.questions.some((question) => question.sourceNumber === sourceNumber)) {
@@ -219,10 +293,15 @@ export function reconcileExtractions(
   }
 
   for (const sourceNumber of sourceNumbers) {
+    compareQuestionField(documents, sourceNumber, "sectionId", (question) => question.sectionId, flags);
+    compareQuestionField(documents, sourceNumber, "subject", (question) => question.subject, flags);
+    compareQuestionField(documents, sourceNumber, "topic", (question) => question.topic, flags);
     compareQuestionField(documents, sourceNumber, "stem.en", (question) => question.stem?.en, flags);
     compareQuestionField(documents, sourceNumber, "stem.hi", (question) => question.stem?.hi, flags);
     compareQuestionField(documents, sourceNumber, "options", (question) => question.options, flags);
     compareQuestionField(documents, sourceNumber, "solution", (question) => question.solution, flags);
+    compareQuestionField(documents, sourceNumber, "disposition", (question) => question.disposition, flags);
+    compareQuestionField(documents, sourceNumber, "marking", (question) => question.marking, flags);
 
     const officialAnswer = options.officialAnswerKey?.[sourceNumber];
     const paperQuestion = paper.questions.find(
@@ -297,6 +376,25 @@ export type ReviewDecision = {
   manualValue?: unknown;
 };
 
+export type ReviewFieldEdit = { path: string; value: unknown };
+
+export function applyReviewEdits(
+  draftInput: ReconciledImport,
+  edits: ReviewFieldEdit[],
+) {
+  const draft = structuredClone(draftInput);
+
+  for (const edit of edits) {
+    if (edit.path === "paper") {
+      draft.paper = ExtractionPaperSchema.parse(edit.value);
+      continue;
+    }
+    setReviewedValue(draft, edit.path, edit.value);
+  }
+
+  return ReconciledImportSchema.parse(draft);
+}
+
 function setReviewedValue(
   draft: ReconciledImport,
   path: string,
@@ -323,15 +421,45 @@ function setReviewedValue(
   const finalSegment = segments.pop();
   if (!finalSegment) throw new Error("Review path must identify a field.");
 
+  let current: unknown = target;
   for (const segment of segments) {
-    const next = target[segment];
-    if (!next || typeof next !== "object" || Array.isArray(next)) {
-      target[segment] = {};
+    if (Array.isArray(current)) {
+      const selected = current.find(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          ((item as { id?: unknown }).id === segment ||
+            (item as { sourceNumber?: unknown }).sourceNumber === segment),
+      );
+      if (!selected) throw new Error("Review array item was not found.");
+      current = selected;
+      continue;
     }
-    target = target[segment] as Record<string, unknown>;
+
+    if (!current || typeof current !== "object") {
+      throw new Error("Review path does not identify an object.");
+    }
+    const record = current as Record<string, unknown>;
+    const next = record[segment];
+    if (next === undefined) record[segment] = {};
+    current = record[segment];
   }
 
-  target[finalSegment] = value;
+  if (Array.isArray(current)) {
+    const index = current.findIndex(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        ((item as { id?: unknown }).id === finalSegment ||
+          (item as { sourceNumber?: unknown }).sourceNumber === finalSegment),
+    );
+    if (index < 0) throw new Error("Review array item was not found.");
+    current[index] = value;
+  } else if (current && typeof current === "object") {
+    (current as Record<string, unknown>)[finalSegment] = value;
+  } else {
+    throw new Error("Review path does not identify a field.");
+  }
 }
 
 export function applyReviewDecisions(
@@ -343,7 +471,12 @@ export function applyReviewDecisions(
   for (const decision of decisions) {
     const flag = draft.reviewFlags.find((item) => item.id === decision.flagId);
     if (!flag) throw new Error("Review flag was not found.");
-    if (flag.resolved) continue;
+    if (
+      decision.resolution === "confirm" &&
+      (flag.code === "missing_field" || flag.code === "invalid_answer_key")
+    ) {
+      throw new Error("Missing required values need a valid replacement.");
+    }
 
     if (decision.resolution !== "confirm") {
       let value = decision.manualValue;
@@ -356,6 +489,22 @@ export function applyReviewDecisions(
         throw new Error("The selected review resolution has no value.");
       }
       setReviewedValue(draft, flag.path, value);
+    }
+
+    if (flag.code === "missing_field" || flag.code === "invalid_answer_key") {
+      const missing = collectMissingPaths(draft.paper).map((path) =>
+        path.replace(/\.invalid$/, ""),
+      );
+      if (
+        missing.some(
+          (path) =>
+            path === flag.path ||
+            path.startsWith(flag.path + ".") ||
+            flag.path.startsWith(path + "."),
+        )
+      ) {
+        throw new Error("Missing required values need a valid replacement.");
+      }
     }
 
     flag.resolved = true;
@@ -409,8 +558,8 @@ export function buildPaperVersionFromImport(
     options: question.options.map((option) => ({
       id: option.id,
       text: {
-        en: option.text.en!,
-        hi: option.text.hi!,
+        en: option.text!.en!,
+        hi: option.text!.hi!,
       },
     })),
     acceptedOptionIds: question.acceptedOptionIds,

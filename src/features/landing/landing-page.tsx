@@ -22,8 +22,9 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { useLocale } from "@/features/localization/locale-provider";
 import { PaperCard } from "@/features/papers/paper-card";
 import { samplePapers } from "@/features/papers/sample-papers";
+import type { PaperSummary } from "@/features/papers/sample-papers";
 
-export function LandingPage() {
+export function LandingPage({ papers = samplePapers }: { papers?: PaperSummary[] }) {
   const { copy, locale, toggleLocale } = useLocale();
 
   return (
@@ -171,7 +172,9 @@ export function LandingPage() {
           <p>{copy.library.description}</p>
         </div>
         <div className="paper-grid">
-          {samplePapers.map((paper) => <PaperCard key={paper.id} paper={paper} />)}
+          {papers.map((paper) => (
+            <PaperCard key={`${paper.id}:${paper.versionId ?? "sample"}`} paper={paper} />
+          ))}
         </div>
       </section>
 

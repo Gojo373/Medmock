@@ -4,6 +4,7 @@ import { POST as appendEvents } from "@/app/api/attempts/[attemptId]/events/rout
 import { POST as submitAttempt } from "@/app/api/attempts/[attemptId]/submit/route";
 import { POST as createAttempt } from "@/app/api/attempts/route";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
+import * as attemptStore from "@/features/exam/server/attempt-store";
 
 const startedAtMs = Date.parse("2026-10-28T10:00:00.000Z");
 
@@ -12,6 +13,7 @@ type CreatedAttempt = {
   status: "active";
   startedAt: string;
   deadlineAt: string;
+  serverNow: string;
 };
 
 function authHeaders(userId = "student-current") {
@@ -91,6 +93,28 @@ afterEach(() => {
 });
 
 describe("attempt API contracts", () => {
+  it("normalizes PostgREST offset timestamps at the persistent adapter boundary", () => {
+    const normalizeAttemptDatabaseRow = (
+      attemptStore as typeof attemptStore & {
+        normalizeAttemptDatabaseRow: (
+          row: Record<string, unknown>,
+        ) => Record<string, unknown>;
+      }
+    ).normalizeAttemptDatabaseRow;
+
+    expect(
+      normalizeAttemptDatabaseRow({
+        started_at: "2026-10-28T10:00:00+00:00",
+        deadline_at: "2026-10-28T13:00:00+00:00",
+        submitted_at: "2026-10-28T11:30:00+00:00",
+      }),
+    ).toMatchObject({
+      started_at: "2026-10-28T10:00:00.000Z",
+      deadline_at: "2026-10-28T13:00:00.000Z",
+      submitted_at: "2026-10-28T11:30:00.000Z",
+    });
+  });
+
   it("rejects unauthenticated attempt creation", async () => {
     const response = await createAttempt(
       new Request("http://localhost/api/attempts", {
@@ -125,6 +149,7 @@ describe("attempt API contracts", () => {
       status: "active",
       startedAt: "2026-10-28T10:00:00.000Z",
       deadlineAt: "2026-10-28T13:00:00.000Z",
+      serverNow: "2026-10-28T10:00:00.000Z",
     });
   });
 
@@ -210,6 +235,45 @@ describe("attempt API contracts", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: "event_after_deadline",
       eventId: lateEvent.id,
+    });
+  });
+
+  it("uses trusted receipt time for offline grace and flags late accepted events", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
+    const { body: graceAttempt } = await startAttempt();
+    const graceDeadline = Date.parse(graceAttempt.deadlineAt);
+    const backdatedInGrace = {
+      ...answerEvent(graceAttempt.attemptId),
+      occurredAt: graceDeadline - 1,
+    };
+    now.mockReturnValue(graceDeadline + 10_000);
+
+    const graceResponse = await appendEvents(
+      eventRequest(graceAttempt.attemptId, [backdatedInGrace]),
+      routeContext(graceAttempt.attemptId),
+    );
+    expect(graceResponse.status).toBe(200);
+    await expect(graceResponse.json()).resolves.toMatchObject({
+      integrityStatus: "flagged",
+    });
+
+    now.mockReturnValue(startedAtMs);
+    const { body: expiredAttempt } = await startAttempt();
+    const expiredDeadline = Date.parse(expiredAttempt.deadlineAt);
+    const backdatedBeyondGrace = {
+      ...answerEvent(expiredAttempt.attemptId),
+      occurredAt: expiredDeadline - 1,
+    };
+    now.mockReturnValue(expiredDeadline + 30_001);
+    const rejected = await appendEvents(
+      eventRequest(expiredAttempt.attemptId, [backdatedBeyondGrace]),
+      routeContext(expiredAttempt.attemptId),
+    );
+
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({
+      error: "event_after_deadline",
+      eventId: backdatedBeyondGrace.id,
     });
   });
 

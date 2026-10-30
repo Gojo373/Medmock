@@ -19,6 +19,35 @@ function event(id: string, clientSequence: number): AnswerEvent {
 }
 
 describe("attempt event synchronization", () => {
+  it("drains offline events in ordered batches of at most 500", async () => {
+    let queue = Array.from({ length: 501 }, (_, index) =>
+      event(`event-${index + 1}`, index + 1),
+    );
+    const batchSizes: number[] = [];
+    const sentSequences: number[] = [];
+    const controller = persistence.createAttemptEventSyncController({
+      getEvents: () => queue,
+      sendEvents: async (events) => {
+        batchSizes.push(events.length);
+        sentSequences.push(...events.map((item) => item.clientSequence));
+        return {
+          acceptedEventIds: events.map((item) => item.id),
+          duplicateEventIds: [],
+        };
+      },
+      acknowledge: async (eventIds) => {
+        const accepted = new Set(eventIds);
+        queue = queue.filter((item) => !accepted.has(item.id));
+      },
+    });
+
+    await controller.request();
+
+    expect(batchSizes).toEqual([500, 1]);
+    expect(sentSequences).toEqual(Array.from({ length: 501 }, (_, index) => index + 1));
+    expect(queue).toEqual([]);
+  });
+
   it("serializes overlapping sync requests and drains events queued in flight", async () => {
     let queue = [event("event-1", 1)];
     let resolveFirst!: (value: {

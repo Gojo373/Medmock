@@ -12,6 +12,7 @@ type ImportJobRow = {
   id: string;
   provider_selection: ClaimedImportJob["providerSelection"];
   processing_attempts: number;
+  lease_owner: string;
 };
 
 type ImportFileRow = {
@@ -39,6 +40,7 @@ export class SupabaseImportProcessingRepository implements ImportProcessingRepos
       id: row.id,
       providerSelection: row.provider_selection,
       processingAttempts: row.processing_attempts,
+      claimToken: row.lease_owner,
     };
   }
 
@@ -69,12 +71,12 @@ export class SupabaseImportProcessingRepository implements ImportProcessingRepos
   }
 
   async completeExtraction(
-    importId: string,
+    claim: ClaimedImportJob,
     documents: ExtractionDocument[],
     reconciled: ReconciledImport,
   ) {
     const reviewFlagCount = reconciled.reviewFlags.filter((flag) => !flag.resolved).length;
-    const { error } = await this.client
+    const { data, error } = await this.client
       .from("import_jobs")
       .update({
         status: "review_required",
@@ -89,12 +91,18 @@ export class SupabaseImportProcessingRepository implements ImportProcessingRepos
         next_retry_at: null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", importId);
+      .eq("id", claim.id)
+      .eq("status", "extracting")
+      .eq("lease_owner", claim.claimToken)
+      .eq("processing_attempts", claim.processingAttempts)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) throw new Error("Import claim is stale.");
   }
 
-  async fail(importId: string, code: string, detail: string) {
-    const { error } = await this.client
+  async fail(claim: ClaimedImportJob, code: string, detail: string) {
+    const { data, error } = await this.client
       .from("import_jobs")
       .update({
         status: "failed",
@@ -105,7 +113,13 @@ export class SupabaseImportProcessingRepository implements ImportProcessingRepos
         next_retry_at: new Date(Date.now() + 60_000).toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", importId);
+      .eq("id", claim.id)
+      .eq("status", "extracting")
+      .eq("lease_owner", claim.claimToken)
+      .eq("processing_attempts", claim.processingAttempts)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) throw new Error("Import claim is stale.");
   }
 }

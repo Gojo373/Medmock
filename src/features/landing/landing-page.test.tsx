@@ -7,6 +7,41 @@ import { LandingPage } from "@/features/landing/landing-page";
 import { LocaleProvider } from "@/features/localization/locale-provider";
 
 describe("LandingPage", () => {
+  it("links a published Supabase paper version into the student journey", () => {
+    render(
+      <LocaleProvider initialLocale="en">
+        <LandingPage
+          papers={[
+            {
+              id: "neet-reviewed",
+              versionId: "neet-reviewed-current-v2",
+              pattern: "current",
+              title: {
+                en: "Reviewed NEET current pattern",
+                hi: "समीक्षित नीट वर्तमान पैटर्न",
+              },
+              publishedAt: "2026-10-28T10:00:00.000Z",
+              questions: 180,
+              minutes: 180,
+              attempts: "New",
+              gradient: "paper-card--cyan",
+            },
+          ]}
+        />
+      </LocaleProvider>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Reviewed NEET current pattern" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Start paper" }),
+    ).toHaveAttribute(
+      "href",
+      "/papers/neet-reviewed?version=neet-reviewed-current-v2",
+    );
+  });
+
   it("presents the MedMock brand, navigation, and published paper library", () => {
     render(
       <LocaleProvider initialLocale="en">

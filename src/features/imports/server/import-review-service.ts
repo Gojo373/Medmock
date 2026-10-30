@@ -2,8 +2,10 @@ import type { PaperVersion } from "@/features/exam/domain";
 import type { PublishImportRequest } from "@/features/imports/contracts";
 import {
   applyReviewDecisions,
+  applyReviewEdits,
   buildPublishedPaperVersionsFromImport,
   type ReviewDecision,
+  type ReviewFieldEdit,
   validateImportForPublish,
 } from "@/features/imports/reconciliation";
 import type { ReconciledImport } from "@/features/imports/schema";
@@ -12,6 +14,15 @@ export type ImportReviewRecord = {
   status: "review_required" | "ready_to_publish" | "published";
   reconciled: ReconciledImport;
   reviewed?: ReconciledImport;
+  sources?: ImportReviewSource[];
+  publishedOriginalVersionId?: string;
+  publishedCurrentVersionId?: string;
+};
+
+export type ImportReviewSource = {
+  kind: "paper" | "answer_key" | "solution";
+  fileName: string;
+  downloadUrl: string;
 };
 
 export interface ImportReviewRepository {
@@ -32,15 +43,14 @@ export async function reviewImport(
   repository: ImportReviewRepository,
   importId: string,
   decisions: ReviewDecision[],
+  edits: ReviewFieldEdit[] = [],
 ) {
   const record = await repository.get(importId);
   if (!record) throw new Error("Import was not found.");
   if (record.status === "published") throw new Error("Published imports cannot be changed.");
 
-  const reviewed = applyReviewDecisions(
-    record.reviewed ?? record.reconciled,
-    decisions,
-  );
+  const edited = applyReviewEdits(record.reviewed ?? record.reconciled, edits);
+  const reviewed = applyReviewDecisions(edited, decisions);
   const validation = validateImportForPublish(reviewed);
   await repository.saveReview(importId, reviewed, validation.canPublish);
 
@@ -61,6 +71,20 @@ export async function publishReviewedImport(
   if (!request.approved) throw new Error("Explicit approval is required.");
   const record = await repository.get(importId);
   if (!record) throw new Error("Import was not found.");
+  const originalId = `${request.paperId}-original-r${request.originalRevision}`;
+  const currentId = `${request.paperId}-current-r${request.currentRevision}`;
+  if (record.status === "published") {
+    if (
+      record.publishedOriginalVersionId === originalId &&
+      record.publishedCurrentVersionId === currentId
+    ) {
+      return {
+        originalVersionId: originalId,
+        currentVersionId: currentId,
+      };
+    }
+    throw new Error("Import was already published with different versions.");
+  }
   if (record.status !== "ready_to_publish" || !record.reviewed) {
     throw new Error("Import is not ready to publish.");
   }
@@ -68,8 +92,6 @@ export async function publishReviewedImport(
   const validation = validateImportForPublish(record.reviewed);
   if (!validation.canPublish) throw new Error("Import is not ready to publish.");
 
-  const originalId = `${request.paperId}-original-r${request.originalRevision}`;
-  const currentId = `${request.paperId}-current-r${request.currentRevision}`;
   const versions = buildPublishedPaperVersionsFromImport(record.reviewed, {
     paperId: request.paperId,
     originalId,

@@ -65,6 +65,12 @@ function formatReviewValue(value: unknown) {
 export function AdminImportReview({ importId }: { importId: string }) {
   const [locale, setLocale] = useState<keyof typeof copy>("en");
   const [document, setDocument] = useState<ReconciledImport>();
+  const [sources, setSources] = useState<Array<{
+    kind: "paper" | "answer_key" | "solution";
+    fileName: string;
+    downloadUrl: string;
+  }>>([]);
+  const [paperEditor, setPaperEditor] = useState("");
   const [canPublish, setCanPublish] = useState(false);
   const [loadState, setLoadState] = useState<"error" | "loading" | "processing" | "ready">("loading");
   const [pendingFlagId, setPendingFlagId] = useState<string>();
@@ -90,6 +96,8 @@ export function AdminImportReview({ importId }: { importId: string }) {
           const payload = await response.json();
           if (cancelled) return;
           setDocument(ReconciledImportSchema.parse(payload.document));
+          setSources(Array.isArray(payload.sources) ? payload.sources : []);
+          setPaperEditor(JSON.stringify(payload.document.paper, null, 2));
           setCanPublish(Boolean(payload.canPublish));
           setLoadState("ready");
           return;
@@ -165,6 +173,34 @@ export function AdminImportReview({ importId }: { importId: string }) {
     }
   }
 
+  async function saveCompletePaper() {
+    let paper: unknown;
+    try {
+      paper = JSON.parse(paperEditor);
+    } catch {
+      setDecisionError(true);
+      return;
+    }
+
+    setDecisionError(false);
+    try {
+      const response = await fetch(`/api/imports/${importId}/review`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ edits: [{ path: "paper", value: paper }] }),
+      });
+      if (!response.ok) throw new Error("Edit failed");
+      const payload = await response.json();
+      const reviewed = ReconciledImportSchema.parse(payload.reviewed);
+      setDocument(reviewed);
+      setPaperEditor(JSON.stringify(reviewed.paper, null, 2));
+      setCanPublish(Boolean(payload.canPublish));
+    } catch {
+      setDecisionError(true);
+    }
+  }
+
   async function publish() {
     if (!approved || !canPublish) return;
     setPublishState("publishing");
@@ -212,6 +248,64 @@ export function AdminImportReview({ importId }: { importId: string }) {
 
       {document && (
         <div className="admin-review-layout">
+          <section aria-label="Reviewed paper content" className="admin-review-content">
+            <GlassPanel>
+              <h2>{locale === "en" ? "Source material" : "स्रोत सामग्री"}</h2>
+              {sources.map((source) => (
+                <a
+                  href={source.downloadUrl}
+                  key={`${source.kind}:${source.fileName}`}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {source.kind === "paper"
+                    ? "Open question paper"
+                    : source.kind === "answer_key"
+                      ? "Open answer key"
+                      : "Open solution file"}
+                </a>
+              ))}
+            </GlassPanel>
+            <GlassPanel>
+              <h2>{document.paper.title?.[locale] ?? "Untitled paper"}</h2>
+              <p>{document.paper.durationMinutes ?? "—"} minutes · {document.paper.year ?? "—"}</p>
+              {document.paper.sections.map((section) => (
+                <section key={section.id}>
+                  <h3>{section.title.en ?? "—"} / {section.title.hi ?? "—"}</h3>
+                  <p>{section.subject} · {section.questionNumbers.join(", ")}</p>
+                </section>
+              ))}
+              {document.paper.questions.map((question) => (
+                <article key={question.sourceNumber}>
+                  <h3>Question {question.sourceNumber}</h3>
+                  <p>{question.stem?.en ?? "—"}</p>
+                  <p>{question.stem?.hi ?? "—"}</p>
+                  <p>{question.subject ?? "—"} · {question.topic ?? "—"} · {question.sectionId ?? "—"}</p>
+                  <ul>
+                    {question.options.map((option) => (
+                      <li key={option.id}>
+                        {option.id}. {option.text?.en ?? "—"} / {option.text?.hi ?? "—"}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>{question.solution?.en ?? "—"} / {question.solution?.hi ?? "—"}</p>
+                  <p>Accepted: {question.acceptedOptionIds.join(", ") || "—"}</p>
+                  <p>Marking: +{question.marking.correct} / {question.marking.incorrect}</p>
+                </article>
+              ))}
+              <label>
+                <span>Complete reviewed paper JSON</span>
+                <textarea
+                  aria-label="Complete reviewed paper JSON"
+                  onChange={(event) => setPaperEditor(event.target.value)}
+                  value={paperEditor}
+                />
+              </label>
+              <Button onClick={saveCompletePaper} tone="secondary">
+                Save complete paper edits
+              </Button>
+            </GlassPanel>
+          </section>
           <section aria-label="Review flags" className="admin-review-flags">
             {document.reviewFlags.map((flag) => (
               <GlassPanel className="admin-review-flag" key={flag.id}>

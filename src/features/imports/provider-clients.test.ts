@@ -92,6 +92,18 @@ describe("production import provider clients", () => {
     expect(String(fetcher.mock.calls[2][0])).toContain(
       "/v1beta/models/gemini-test:generateContent?key=gemini-secret",
     );
+    const generationRequest = JSON.parse(
+      String(fetcher.mock.calls[2][1]?.body),
+    ) as Record<string, unknown>;
+    expect(generationRequest).toMatchObject({
+      contents: expect.any(Array),
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseJsonSchema: expect.any(Object),
+      },
+    });
+    expect(generationRequest).not.toHaveProperty("model");
+    expect(generationRequest).not.toHaveProperty("config");
   });
 
   it("rejects provider HTTP failures without exposing response bodies", async () => {

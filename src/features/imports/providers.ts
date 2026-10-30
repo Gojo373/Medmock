@@ -1,6 +1,7 @@
 import {
   ExtractionDocumentSchema,
   ExtractionPayloadSchema,
+  normalizeProviderExtractionPayload,
   ProviderSelectionSchema,
   extractionResponseJsonSchema,
   type ExtractionDocument,
@@ -10,7 +11,7 @@ import {
 } from "@/features/imports/schema";
 
 const extractionPrompt =
-  "Extract every NEET question, bilingual text, options, reviewed answer candidates, solution, topic, section, and field confidence. Preserve missing values for admin review and never invent publication approval.";
+  "Extract every NEET question, bilingual text, options, reviewed answer candidates, solution, topic, section, and field confidence. Return officialAnswerKeyEntries only for answers explicitly present in the attached answer-key file; never infer official provenance from the paper or solution booklet. Preserve missing values for admin review and never invent publication approval.";
 
 export interface ExtractionProvider {
   id: ExtractionProviderId;
@@ -93,7 +94,9 @@ export function createOpenAIExtractionProvider({
         ],
         text: { format },
       });
-      const extracted = ExtractionPayloadSchema.parse(response.output_parsed);
+      const extracted = ExtractionPayloadSchema.parse(
+        normalizeProviderExtractionPayload(response.output_parsed),
+      );
 
       return ExtractionDocumentSchema.parse({
         ...extracted,
@@ -154,7 +157,9 @@ export function createGeminiExtractionProvider({
           responseJsonSchema: extractionResponseJsonSchema,
         },
       });
-      const extracted = ExtractionPayloadSchema.parse(JSON.parse(response.text));
+      const extracted = ExtractionPayloadSchema.parse(
+        normalizeProviderExtractionPayload(JSON.parse(response.text)),
+      );
 
       return ExtractionDocumentSchema.parse({
         ...extracted,

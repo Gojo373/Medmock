@@ -70,7 +70,7 @@ export function createAttemptEventSyncController({
   async function drain() {
     while (requested) {
       requested = false;
-      const events = getEvents();
+      const events = mergeAnswerEvents([], getEvents()).slice(0, 500);
       if (events.length === 0) continue;
 
       const result = await sendEvents(events);
@@ -172,6 +172,46 @@ export class IndexedDbAttemptPersistence {
       store.put(event);
     }
 
+    await transactionDone(transaction);
+  }
+
+  async migrateSessionAttempt(
+    previousAttemptId: string,
+    session: ExamSessionState,
+  ) {
+    const database = await this.database;
+    const transaction = database.transaction(
+      [sessionStoreName, eventStoreName],
+      "readwrite",
+    );
+    const sessions = transaction.objectStore(sessionStoreName);
+    const events = transaction.objectStore(eventStoreName);
+    const previousEventKeys = events
+      .index("attemptId")
+      .getAllKeys(previousAttemptId);
+
+    sessions.put(session);
+    if (previousAttemptId !== session.attemptId) sessions.delete(previousAttemptId);
+    previousEventKeys.addEventListener("success", () => {
+      for (const key of previousEventKeys.result) events.delete(key);
+    });
+    for (const event of session.eventQueue) events.put(event);
+
+    await transactionDone(transaction);
+  }
+
+  async retireAttempt(attemptId: string) {
+    const database = await this.database;
+    const transaction = database.transaction(
+      [sessionStoreName, eventStoreName],
+      "readwrite",
+    );
+    transaction.objectStore(sessionStoreName).delete(attemptId);
+    const events = transaction.objectStore(eventStoreName);
+    const eventKeys = events.index("attemptId").getAllKeys(attemptId);
+    eventKeys.addEventListener("success", () => {
+      for (const key of eventKeys.result) events.delete(key);
+    });
     await transactionDone(transaction);
   }
 

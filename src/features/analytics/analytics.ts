@@ -15,6 +15,10 @@ import {
   materializeAnswers,
   type AnswerEvent,
 } from "@/features/exam/session";
+import {
+  normalizeDatabaseTimestamp,
+  normalizeNullableDatabaseTimestamp,
+} from "@/lib/database-timestamps";
 
 const minimumPercentileAttemptCount = 100;
 const anonymousDisplayName = "Anonymous aspirant";
@@ -237,9 +241,9 @@ export function buildDashboardDataFromRows(input: DashboardRowInput) {
         attemptNumber: row.attempt_number,
         visibility: row.visibility,
         integrityStatus: row.integrity_status,
-        startedAt: row.started_at,
-        deadlineAt: row.deadline_at,
-        submittedAt: row.submitted_at,
+        startedAt: normalizeDatabaseTimestamp(row.started_at),
+        deadlineAt: normalizeDatabaseTimestamp(row.deadline_at),
+        submittedAt: normalizeNullableDatabaseTimestamp(row.submitted_at),
         answers: paper.questions.flatMap((question) => {
           const answer = materialized[question.id];
           return answer
@@ -276,7 +280,7 @@ export function buildDashboardDataFromRows(input: DashboardRowInput) {
       attempt.integrityStatus === "clear",
   );
   const entries = input.leaderboardRows.map((row) => {
-    const submittedAt = String(row.submitted_at);
+    const submittedAt = normalizeDatabaseTimestamp(row.submitted_at);
     const score = Number(row.score);
     const correct = Number(row.correct);
     const incorrect = Number(row.incorrect);

@@ -1,10 +1,13 @@
 import { LandingPage } from "@/features/landing/landing-page";
 import { LocaleProvider } from "@/features/localization/locale-provider";
+import { loadPublishedPaperLibrary } from "@/features/papers/server/published-paper-store";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const papers = await loadPublishedPaperLibrary();
+
   return (
     <LocaleProvider>
-      <LandingPage />
+      <LandingPage papers={papers} />
     </LocaleProvider>
   );
 }

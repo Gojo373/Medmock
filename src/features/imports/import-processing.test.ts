@@ -107,11 +107,52 @@ function runtime(id: "openai" | "gemini") {
 }
 
 describe("durable import processing", () => {
+  it("applies official provenance only to answers extracted from the answer-key attachment", async () => {
+    const job: ClaimedImportJob = {
+      id: "import-1",
+      providerSelection: "openai",
+      processingAttempts: 1,
+      claimToken: "worker-1",
+    };
+    const store = repository();
+    const openai = runtime("openai");
+    vi.mocked(openai.provider.extract).mockImplementationOnce(async (source) => ({
+      ...extracted("openai", source),
+      officialAnswerKeyEntries: [
+        { sourceNumber: "1", acceptedOptionIds: ["B"] },
+      ],
+    }));
+
+    await processClaimedImportJob(job, store, {
+      openai,
+      gemini: runtime("gemini"),
+    });
+
+    const reconciled = vi.mocked(store.completeExtraction).mock.calls[0][2];
+    expect(reconciled.paper.questions[0]).toMatchObject({
+      acceptedOptionIds: ["B"],
+      answerKeyProvenance: { source: "official", reference: "key-file" },
+    });
+
+    const noEntriesStore = repository();
+    await processClaimedImportJob(job, noEntriesStore, {
+      openai: runtime("openai"),
+      gemini: runtime("gemini"),
+    });
+    const withoutOfficialEntry = vi.mocked(
+      noEntriesStore.completeExtraction,
+    ).mock.calls[0][2];
+    expect(withoutOfficialEntry.paper.questions[0].answerKeyProvenance).toEqual({
+      source: "provider",
+    });
+  });
+
   it("uploads paper, official key, and solutions to every selected provider", async () => {
     const job: ClaimedImportJob = {
       id: "import-1",
       providerSelection: "both",
       processingAttempts: 1,
+      claimToken: "worker-1",
     };
     const store = repository();
     const openai = runtime("openai");
@@ -137,7 +178,7 @@ describe("durable import processing", () => {
       },
     });
     expect(store.completeExtraction).toHaveBeenCalledWith(
-      "import-1",
+      job,
       expect.arrayContaining([
         expect.objectContaining({ provider: "openai" }),
         expect.objectContaining({ provider: "gemini" }),
@@ -151,6 +192,7 @@ describe("durable import processing", () => {
       id: "import-1",
       providerSelection: "openai",
       processingAttempts: 2,
+      claimToken: "worker-1",
     };
     const store = repository({
       downloadFile: vi.fn().mockRejectedValue(new Error("storage unavailable")),
@@ -164,7 +206,7 @@ describe("durable import processing", () => {
     ).rejects.toThrow("storage unavailable");
 
     expect(store.fail).toHaveBeenCalledWith(
-      "import-1",
+      job,
       "import_processing_failed",
       "storage unavailable",
     );
@@ -176,6 +218,7 @@ describe("durable import processing", () => {
       id: "import-1",
       providerSelection: "gemini",
       processingAttempts: 1,
+      claimToken: "worker-1",
     };
     const store = repository({ claimNext: vi.fn().mockResolvedValue(job) });
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,6 +34,90 @@ const reviewDocument = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportReview", () => {
+  it("shows source files and the complete bilingual paper content and saves edits", async () => {
+    const user = userEvent.setup();
+    const completeDocument = {
+      ...reviewDocument,
+      paper: {
+        ...reviewDocument.paper,
+        sections: [
+          {
+            id: "physics",
+            subject: "physics",
+            title: { en: "Physics", hi: "भौतिक विज्ञान" },
+            questionNumbers: ["1"],
+            selectionLimit: null,
+          },
+        ],
+        questions: [
+          {
+            sourceNumber: "1",
+            sectionId: "physics",
+            subject: "physics",
+            topic: "Mechanics",
+            stem: { en: "What is force?", hi: "बल क्या है?" },
+            options: [
+              { id: "A", text: { en: "Mass times acceleration", hi: "द्रव्यमान गुणा त्वरण" } },
+              { id: "B", text: { en: "Energy", hi: "ऊर्जा" } },
+            ],
+            acceptedOptionIds: ["A"],
+            solution: { en: "Use Newton's second law.", hi: "न्यूटन का दूसरा नियम लगाएँ।" },
+            disposition: "standard",
+            marking: { correct: 4, incorrect: -1, unattempted: 0 },
+            answerKeyProvenance: { source: "provider" },
+            confidence: {},
+          },
+        ],
+      },
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          document: completeDocument,
+          canPublish: false,
+          sources: [
+            {
+              kind: "paper",
+              fileName: "neet-paper.pdf",
+              downloadUrl: "https://storage.example/signed-paper",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ reviewed: completeDocument, canPublish: false, issues: [] }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<AdminImportReview importId="import-1" />);
+
+    expect(await screen.findByRole("link", { name: "Open question paper" })).toHaveAttribute(
+      "href",
+      "https://storage.example/signed-paper",
+    );
+    expect(screen.getByRole("heading", { name: "Physics / भौतिक विज्ञान" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Question 1" })).toBeInTheDocument();
+    expect(screen.getByText("What is force?")).toBeInTheDocument();
+    expect(screen.getByText("बल क्या है?")).toBeInTheDocument();
+    expect(screen.getByText(/Mass times acceleration \/ द्रव्यमान गुणा त्वरण/)).toBeInTheDocument();
+    expect(screen.getByText("Use Newton's second law. / न्यूटन का दूसरा नियम लगाएँ।")).toBeInTheDocument();
+
+    const editor = screen.getByRole("textbox", { name: "Complete reviewed paper JSON" });
+    const edited = structuredClone(completeDocument.paper);
+    edited.questions[0].topic = "Laws of motion";
+    fireEvent.change(editor, { target: { value: JSON.stringify(edited) } });
+    await user.click(screen.getByRole("button", { name: "Save complete paper edits" }));
+
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/api/imports/import-1/review",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ edits: [{ path: "paper", value: edited }] }),
+      }),
+    );
+  });
+
   it("shows every provider value and persists an explicit review decision", async () => {
     const user = userEvent.setup();
     const fetcher = vi

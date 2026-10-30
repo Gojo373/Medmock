@@ -120,12 +120,20 @@ export function createGeminiProviderRuntime({
   const client = {
     models: {
       async generateContent(request: unknown) {
+        const sdkRequest = request as {
+          model?: unknown;
+          contents?: unknown;
+          config?: unknown;
+        };
         const response = await fetcher(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify(request),
+            body: JSON.stringify({
+              contents: sdkRequest.contents,
+              generationConfig: sdkRequest.config,
+            }),
           },
         );
         const payload = await requireJson(response, "Gemini extraction");

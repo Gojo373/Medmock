@@ -61,9 +61,22 @@ export const ReviewFlagDecisionSchema = z
 
 export const ReviewImportRequestSchema = z
   .object({
-    decisions: z.array(ReviewFlagDecisionSchema).min(1),
+    decisions: z.array(ReviewFlagDecisionSchema).default([]),
+    edits: z
+      .array(
+        z
+          .object({
+            path: z.string().trim().min(1),
+            value: z.unknown(),
+          })
+          .strict(),
+      )
+      .default([]),
   })
-  .strict();
+  .strict()
+  .refine((request) => request.decisions.length + request.edits.length > 0, {
+    message: "A review update requires a decision or edit.",
+  });
 
 export const PublishImportRequestSchema = z
   .object({

@@ -6,7 +6,7 @@ import {
 import { getRemainingTimeMs } from "@/features/exam/timer";
 
 export type ExamMode = "mock" | "practice";
-export type SessionStatus = "active" | "submit_pending" | "submitted";
+export type SessionStatus = "active" | "submit_pending" | "finalizing" | "submitted";
 export type SubmissionReason = "manual" | "expired";
 
 export type AnswerEvent = {
@@ -32,10 +32,18 @@ export type PracticeFeedback = {
   solution?: LocalizedText;
 };
 
+export type ExamRecoveryIdentity = {
+  userId: string;
+  paperVersionId: string;
+  mode: ExamMode;
+  generation: string;
+};
+
 export type ExamSessionState = {
   attemptId: string;
   paper: PaperVersion;
   mode: ExamMode;
+  recoveryIdentity?: ExamRecoveryIdentity;
   status: SessionStatus;
   currentQuestionId: string;
   visitedQuestionIds: string[];
@@ -86,12 +94,14 @@ export function createExamSession({
   mode,
   nowMs,
   deadlineAtMs,
+  recoveryIdentity,
 }: {
   attemptId: string;
   paper: PaperVersion;
   mode: ExamMode;
   nowMs: number;
   deadlineAtMs: number;
+  recoveryIdentity?: ExamRecoveryIdentity;
 }): ExamSessionState {
   const paper = PaperVersionSchema.parse(paperInput);
   const firstQuestion = paper.questions[0];
@@ -104,6 +114,7 @@ export function createExamSession({
     attemptId,
     paper,
     mode,
+    recoveryIdentity,
     status: "active",
     currentQuestionId: firstQuestion.id,
     visitedQuestionIds: [firstQuestion.id],
@@ -226,18 +237,18 @@ export function examSessionReducer(
     const remainingMs = getRemainingTimeMs(state.deadlineAtMs, action.nowMs);
 
     if (remainingMs === 0 && state.status !== "submitted") {
+      const expiryAt = state.deadlineAtMs;
       const timedState = recordCurrentQuestionTime(
         state,
         action.eventId,
-        action.nowMs,
+        expiryAt,
       );
       return {
         ...timedState,
         nowMs: action.nowMs,
         remainingMs,
-        status: "submitted",
+        status: "finalizing",
         submissionReason: "expired",
-        submittedAt: action.nowMs,
       };
     }
 
@@ -390,11 +401,15 @@ export function examSessionReducer(
     };
   }
 
-  if (action.type === "CONFIRM_SUBMIT" && state.status === "submit_pending") {
+  if (
+    action.type === "CONFIRM_SUBMIT" &&
+    (state.status === "submit_pending" || state.status === "finalizing")
+  ) {
     return {
       ...state,
       status: "submitted",
-      submissionReason: "manual",
+      submissionReason:
+        state.status === "finalizing" ? state.submissionReason : "manual",
       submittedAt: action.submittedAt,
     };
   }

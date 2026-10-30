@@ -34,12 +34,25 @@ describe("AdminImportWorkspace", () => {
 
   it("uploads the selected source and starts a durable import job", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ importId: "import-1", status: "uploaded" }), {
-        status: 202,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          importId: "import-1",
+          status: "uploading",
+          uploads: [
+            { kind: "paper", uploadUrl: "https://storage.example/paper" },
+            { kind: "answer_key", uploadUrl: "https://storage.example/key" },
+            { kind: "solution", uploadUrl: "https://storage.example/solution" },
+          ],
+        }, { status: 201 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        Response.json({ importId: "import-1", status: "uploaded" }, { status: 202 }),
+      );
     vi.stubGlobal("fetch", fetchMock);
     render(<AdminImportWorkspace />);
 
@@ -57,13 +70,32 @@ describe("AdminImportWorkspace", () => {
     );
     await user.click(screen.getByRole("button", { name: /start reviewed extraction/i }));
 
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
       "/api/imports/upload",
-      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
+      expect.objectContaining({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: expect.any(String),
+      }),
     );
-    const request = fetchMock.mock.calls[0][1] as { body: FormData };
-    expect((request.body.get("answerKey") as File).name).toBe("key.pdf");
-    expect((request.body.get("solution") as File).name).toBe("solutions.pdf");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      providerSelection: "both",
+      files: [
+        { kind: "paper", fileName: "neet.pdf", mimeType: "application/pdf", size: 5 },
+        { kind: "answer_key", fileName: "key.pdf", mimeType: "application/pdf", size: 3 },
+        { kind: "solution", fileName: "solutions.pdf", mimeType: "application/pdf", size: 9 },
+      ],
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://storage.example/paper",
+      expect.objectContaining({ method: "PUT", body: expect.any(File) }),
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/imports/upload/import-1/complete",
+      expect.objectContaining({ method: "POST" }),
+    );
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Import queued for extraction and review.",
     );

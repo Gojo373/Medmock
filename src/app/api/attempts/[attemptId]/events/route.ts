@@ -42,6 +42,7 @@ export async function POST(
       parsedId.data,
       user.id,
       parsed.data.events,
+      Date.now(),
     );
   } catch {
     logServerEvent("error", "attempt.events_failed", {

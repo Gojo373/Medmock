@@ -67,6 +67,7 @@ export function createImportReviewHandlers(repository: ImportReviewRepository) {
           document: record.reviewed ?? record.reconciled,
           canPublish:
             record.status === "ready_to_publish" || record.status === "published",
+          sources: record.sources ?? [],
         });
       } catch {
         logServerEvent("error", "import.review_read_failed", {
@@ -93,6 +94,7 @@ export function createImportReviewHandlers(repository: ImportReviewRepository) {
           repository,
           authorization.importId,
           parsed.data.decisions,
+          parsed.data.edits,
         );
         return Response.json(result);
       } catch (error) {

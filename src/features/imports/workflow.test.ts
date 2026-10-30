@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PaperVersion } from "@/features/exam/domain";
 import {
   ExtractionDocumentSchema,
+  extractionResponseJsonSchema,
   type ExtractionDocument,
   type ExtractionPayload,
 } from "@/features/imports/schema";
@@ -26,6 +27,7 @@ function localized(en: string, hi = en + " हिंदी") {
 function payload(overrides: Record<string, unknown> = {}): ExtractionPayload {
   return {
     schemaVersion: 1,
+    officialAnswerKeyEntries: [],
     paper: {
       title: localized("NEET 2025"),
       year: 2025,
@@ -77,6 +79,40 @@ function document(
 }
 
 describe("provider selection and adapters", () => {
+  it("defines a complete recursively strict provider response schema", () => {
+    const objectPaths: string[] = [];
+    const missingStrictness: string[] = [];
+
+    function inspect(value: unknown, path: string) {
+      if (!value || typeof value !== "object") return;
+      const schema = value as Record<string, unknown>;
+      if (schema.type === "object" ||
+        (Array.isArray(schema.type) && schema.type.includes("object"))) {
+        objectPaths.push(path);
+        if (schema.additionalProperties !== false) missingStrictness.push(path);
+        const properties = schema.properties as Record<string, unknown> | undefined;
+        if (properties) {
+          for (const [key, child] of Object.entries(properties)) {
+            inspect(child, `${path}.${key}`);
+          }
+        }
+      }
+      if (schema.items) inspect(schema.items, `${path}[]`);
+    }
+
+    inspect(extractionResponseJsonSchema, "$response");
+    expect(objectPaths.length).toBeGreaterThan(8);
+    expect(missingStrictness).toEqual([]);
+
+    const questionSchema = (
+      extractionResponseJsonSchema.properties.paper.properties.questions.items
+    );
+    expect(Object.keys(questionSchema.properties).sort()).toEqual(
+      [...questionSchema.required].sort(),
+    );
+    expect(questionSchema.properties).toHaveProperty("answerKeyProvenance");
+  });
+
   it("selects OpenAI, Gemini, or both in a stable order", () => {
     const registry = {
       openai: { id: "openai", extract: async () => document("openai") },
@@ -133,6 +169,55 @@ describe("provider selection and adapters", () => {
       ],
       text: { format: { type: "json-schema-format" } },
     });
+  });
+
+  it("normalizes provider nulls into reviewable missing question fields", async () => {
+    const nullablePayload = structuredClone(payload()) as unknown as {
+      schemaVersion: 1;
+      paper: {
+        questions: Array<Record<string, unknown>>;
+      };
+    };
+    Object.assign(nullablePayload.paper.questions[0], {
+      sectionId: null,
+      subject: null,
+      topic: null,
+      stem: null,
+      solution: null,
+    });
+    const provider = createOpenAIExtractionProvider({
+      client: {
+        responses: {
+          parse: async () => ({ output_parsed: nullablePayload }),
+        },
+      },
+      model: "openai-extraction-model",
+      format: { type: "json-schema-format" },
+    });
+
+    const extracted = await provider.extract({
+      fileId: "file-openai",
+      fileName: "neet-2025.pdf",
+      mimeType: "application/pdf",
+    });
+    const question = extracted.paper.questions[0];
+    expect(question).toMatchObject({ sourceNumber: "1" });
+    expect(question.sectionId).toBeUndefined();
+    expect(question.subject).toBeUndefined();
+    expect(question.topic).toBeUndefined();
+    expect(question.stem).toBeUndefined();
+    expect(question.solution).toBeUndefined();
+
+    const draft = reconcileExtractions([extracted]);
+    expect(draft.reviewFlags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "questions.1.sectionId" }),
+        expect.objectContaining({ path: "questions.1.subject" }),
+        expect.objectContaining({ path: "questions.1.topic" }),
+        expect.objectContaining({ path: "questions.1.stem.en" }),
+        expect.objectContaining({ path: "questions.1.solution.en" }),
+      ]),
+    );
   });
 
   it("uses Gemini document input with JSON response schema", async () => {
@@ -264,6 +349,50 @@ describe("reconcileExtractions", () => {
     expect(draft.status).toBe("review_required");
   });
 
+  it("flags paper structure, scoring, and bilingual metadata disagreements", () => {
+    const openaiPayload = payload();
+    openaiPayload.paper.sections = [
+      {
+        id: "physics",
+        subject: "physics",
+        title: localized("Physics"),
+        questionNumbers: ["1"],
+        selectionLimit: 1,
+      },
+    ];
+    const geminiPayload = structuredClone(openaiPayload);
+    geminiPayload.paper.durationMinutes = 200;
+    geminiPayload.paper.sections[0].title.hi = "भौतिकी";
+    geminiPayload.paper.sections[0].selectionLimit = null;
+    geminiPayload.paper.questions[0].sectionId = "physics-b";
+    geminiPayload.paper.questions[0].subject = "chemistry";
+    geminiPayload.paper.questions[0].topic = "Physical chemistry";
+    geminiPayload.paper.questions[0].disposition = "bonus";
+    geminiPayload.paper.questions[0].marking = {
+      correct: 5,
+      incorrect: -2,
+      unattempted: 0,
+    };
+
+    const draft = reconcileExtractions([
+      document("openai", openaiPayload),
+      document("gemini", geminiPayload),
+    ]);
+
+    expect(draft.reviewFlags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "paper.durationMinutes" }),
+        expect.objectContaining({ path: "paper.sections.physics.title.hi" }),
+        expect.objectContaining({ path: "paper.sections.physics.selectionLimit" }),
+        expect.objectContaining({ path: "questions.1.sectionId" }),
+        expect.objectContaining({ path: "questions.1.subject" }),
+        expect.objectContaining({ path: "questions.1.topic" }),
+        expect.objectContaining({ path: "questions.1.disposition" }),
+        expect.objectContaining({ path: "questions.1.marking" }),
+      ]),
+    );
+  });
+
   it("flags low confidence and a missing answer key for review", () => {
     const incompletePayload = payload();
     incompletePayload.paper.questions[0].acceptedOptionIds = [];
@@ -363,6 +492,76 @@ describe("review and publish policy", () => {
 
     expect(reviewed.paper.questions[0].stem?.en).toBe("Define force.");
     expect(reviewed.reviewFlags.find((flag) => flag.id === conflict.id)?.resolved).toBe(true);
+  });
+
+  it("edits option arrays through schema-aware paths without corrupting them", () => {
+    const incompletePayload = payload();
+    incompletePayload.paper.questions[0].options[0].text = {
+      en: "Mass times acceleration",
+    };
+    const draft = reconcileExtractions([document("openai", incompletePayload)]);
+    const flag = draft.reviewFlags.find(
+      (item) => item.path === "questions.1.options.A.text.hi",
+    )!;
+
+    const reviewed = reconciliationModule.applyReviewDecisions(draft, [
+      {
+        flagId: flag.id,
+        resolution: "manual_value",
+        manualValue: "द्रव्यमान गुणा त्वरण",
+      },
+    ]);
+
+    expect(reviewed.paper.questions[0].options).toEqual([
+      {
+        id: "A",
+        text: {
+          en: "Mass times acceleration",
+          hi: "द्रव्यमान गुणा त्वरण",
+        },
+      },
+      incompletePayload.paper.questions[0].options[1],
+    ]);
+  });
+
+  it("requires a valid replacement for missing values and permits correction before publication", () => {
+    const incompletePayload = payload();
+    incompletePayload.paper.questions[0].acceptedOptionIds = [];
+    const missingDraft = reconcileExtractions([document("openai", incompletePayload)]);
+    const missingFlag = missingDraft.reviewFlags.find(
+      (item) => item.path === "questions.1.acceptedOptionIds",
+    )!;
+
+    expect(() =>
+      reconciliationModule.applyReviewDecisions(missingDraft, [
+        { flagId: missingFlag.id, resolution: "confirm" },
+      ]),
+    ).toThrow("Missing required values need a valid replacement.");
+
+    const openai = document("openai");
+    const geminiPayload = payload();
+    geminiPayload.paper.questions[0].stem!.en = "Define force.";
+    const conflictDraft = reconcileExtractions([
+      openai,
+      document("gemini", geminiPayload),
+    ]);
+    const conflict = conflictDraft.reviewFlags.find(
+      (item) => item.path === "questions.1.stem.en",
+    )!;
+    const firstReview = reconciliationModule.applyReviewDecisions(conflictDraft, [
+      { flagId: conflict.id, resolution: "accept_primary" },
+    ]);
+    const corrected = reconciliationModule.applyReviewDecisions(firstReview, [
+      {
+        flagId: conflict.id,
+        resolution: "manual_value",
+        manualValue: "Corrected force question",
+      },
+    ]);
+
+    expect(corrected.paper.questions[0].stem?.en).toBe(
+      "Corrected force question",
+    );
   });
 
   it("maps an approved extraction into the shared published paper schema", () => {

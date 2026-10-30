@@ -377,8 +377,8 @@ for select to anon, authenticated using (true);
 create policy papers_admin_all on public.papers
 for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
-create policy published_versions_admin_read on public.paper_versions
-for select to authenticated using (public.is_admin());
+create policy paper_versions_published_read on public.paper_versions
+for select to anon, authenticated using (status = 'published');
 create policy paper_versions_admin_insert on public.paper_versions
 for insert to authenticated with check (public.is_admin());
 create policy paper_versions_admin_update on public.paper_versions
@@ -421,6 +421,8 @@ declare
   accepted_ids jsonb := '[]'::jsonb;
   duplicate_ids jsonb := '[]'::jsonb;
   event_count integer;
+  receipt_time timestamptz := clock_timestamp();
+  offline_grace interval := interval '30 seconds';
 begin
   select * into attempt_row
   from public.attempts
@@ -434,10 +436,6 @@ begin
 
   for event_value in select value from jsonb_array_elements(p_events)
   loop
-    if to_timestamp((event_value ->> 'occurredAt')::double precision / 1000.0) > attempt_row.deadline_at then
-      return jsonb_build_object('error', 'event_after_deadline', 'eventId', event_value ->> 'id');
-    end if;
-
     select * into existing from public.answer_events
     where attempt_id = p_attempt_id and id = event_value ->> 'id';
 
@@ -452,6 +450,18 @@ begin
       end if;
       duplicate_ids := duplicate_ids || jsonb_build_array(event_value ->> 'id');
     else
+      if to_timestamp((event_value ->> 'occurredAt')::double precision / 1000.0) > attempt_row.deadline_at
+        or receipt_time > attempt_row.deadline_at + offline_grace then
+        return jsonb_build_object('error', 'event_after_deadline', 'eventId', event_value ->> 'id');
+      end if;
+
+      if receipt_time > attempt_row.deadline_at then
+        update public.attempts
+        set integrity_status = 'flagged'
+        where id = p_attempt_id;
+        attempt_row.integrity_status := 'flagged';
+      end if;
+
       if attempt_row.mode = 'practice'
         and event_value ->> 'type' = 'answer_selected'
         and exists (
@@ -484,7 +494,8 @@ begin
   return jsonb_build_object(
     'acceptedEventIds', accepted_ids,
     'duplicateEventIds', duplicate_ids,
-    'eventCount', event_count
+    'eventCount', event_count,
+    'integrityStatus', attempt_row.integrity_status
   );
 end;
 $$;

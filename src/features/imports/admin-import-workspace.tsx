@@ -130,22 +130,63 @@ export function AdminImportWorkspace() {
   async function startImport() {
     if (!paperFile) return;
     setImportStatus("uploading");
-    const body = new FormData();
-    body.set("paper", paperFile);
-    body.set("providerSelection", provider);
-    if (answerKeyFile) body.set("answerKey", answerKeyFile);
-    if (solutionFile) body.set("solution", solutionFile);
+    const sources = [
+      { file: paperFile, kind: "paper" as const },
+      ...(answerKeyFile
+        ? [{ file: answerKeyFile, kind: "answer_key" as const }]
+        : []),
+      ...(solutionFile
+        ? [{ file: solutionFile, kind: "solution" as const }]
+        : []),
+    ];
 
     try {
-      const response = await fetch("/api/imports/upload", {
+      const registrationResponse = await fetch("/api/imports/upload", {
         method: "POST",
-        body,
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          providerSelection: provider,
+          files: sources.map(({ file, kind }) => ({
+            kind,
+            fileName: file.name,
+            mimeType: file.type,
+            size: file.size,
+          })),
+        }),
       });
-      if (!response.ok) throw new Error("Import upload failed");
-      const payload = await response.json();
+      if (!registrationResponse.ok) throw new Error("Import registration failed");
+      const payload = await registrationResponse.json();
       if (typeof payload.importId !== "string" || !payload.importId) {
         throw new Error("Import response was invalid");
       }
+
+      const uploadByKind = new Map<string, { uploadUrl: string }>(
+        (Array.isArray(payload.uploads) ? payload.uploads : []).map(
+          (upload: { kind: string; uploadUrl: string }) => [upload.kind, upload],
+        ),
+      );
+      for (const source of sources) {
+        const upload = uploadByKind.get(source.kind);
+        if (!upload?.uploadUrl) throw new Error("Signed upload was missing");
+        const uploadResponse = await fetch(upload.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": source.file.type },
+          body: source.file,
+        });
+        if (!uploadResponse.ok) throw new Error("Storage upload failed");
+      }
+
+      const finalizeResponse = await fetch(
+        `/api/imports/upload/${payload.importId}/complete`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
+      if (!finalizeResponse.ok) throw new Error("Import finalization failed");
       setImportId(payload.importId);
       setImportStatus("queued");
     } catch {

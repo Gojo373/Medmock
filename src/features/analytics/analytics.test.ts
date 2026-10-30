@@ -369,9 +369,9 @@ describe("database-backed dashboard mapping", () => {
           attempt_number: attempt.attemptNumber,
           visibility: attempt.visibility,
           integrity_status: attempt.integrityStatus,
-          started_at: attempt.startedAt,
-          deadline_at: attempt.deadlineAt,
-          submitted_at: attempt.submittedAt,
+          started_at: "2026-10-28T10:00:00+00:00",
+          deadline_at: "2026-10-28T13:00:00+00:00",
+          submitted_at: "2026-10-28T11:30:00+00:00",
         },
       ],
       resultRows: [{ attempt_id: attempt.id, result }],
@@ -397,7 +397,7 @@ describe("database-backed dashboard mapping", () => {
           correct: result.correct,
           incorrect: result.incorrect,
           total_time_ms: 42_000,
-          submitted_at: submittedAt,
+          submitted_at: "2026-10-28T11:30:00+00:00",
           percentile: null,
         },
       ],
@@ -407,6 +407,10 @@ describe("database-backed dashboard mapping", () => {
     if (!dashboard) throw new Error("Expected a populated dashboard.");
     expect(dashboard.initialHideName).toBe(true);
     expect(dashboard.history).toHaveLength(1);
+    expect(dashboard.currentAttempt.attempt.startedAt).toBe(
+      "2026-10-28T10:00:00.000Z",
+    );
+    expect(dashboard.currentAttempt.attempt.submittedAt).toBe(submittedAt);
     expect(dashboard.currentAttempt.attempt.answers[0].timeSpentMs).toBe(42_000);
     expect(dashboard.eligibleAttemptCount).toBe(1);
     expect(dashboard.leaderboard.entries[0].currentUser).toBe(true);

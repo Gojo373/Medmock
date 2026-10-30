@@ -22,6 +22,7 @@ export type ClaimedImportJob = {
   id: string;
   providerSelection: ProviderSelection;
   processingAttempts: number;
+  claimToken: string;
 };
 
 export interface ImportProcessingRepository {
@@ -29,11 +30,11 @@ export interface ImportProcessingRepository {
   listFiles(importId: string): Promise<StoredImportFile[]>;
   downloadFile(file: StoredImportFile): Promise<File>;
   completeExtraction(
-    importId: string,
+    claim: ClaimedImportJob,
     documents: ExtractionDocument[],
     reconciled: ReconciledImport,
   ): Promise<void>;
-  fail(importId: string, code: string, detail: string): Promise<void>;
+  fail(claim: ClaimedImportJob, code: string, detail: string): Promise<void>;
 }
 
 export type ProviderRuntime = {
@@ -57,23 +58,36 @@ function requireFile(files: StoredImportFile[], kind: ImportFileKind) {
   return file;
 }
 
-function withOfficialKeyProvenance(
+function applyOfficialAnswerKeyEntries(
   document: ExtractionDocument,
   answerKey: StoredImportFile | undefined,
 ) {
   if (!answerKey) return document;
 
+  const entryByQuestion = new Map(
+    document.officialAnswerKeyEntries.map((entry) => [
+      entry.sourceNumber,
+      entry.acceptedOptionIds,
+    ]),
+  );
+
   return {
     ...document,
     paper: {
       ...document.paper,
-      questions: document.paper.questions.map((question) => ({
-        ...question,
-        answerKeyProvenance: {
-          source: "official" as const,
-          reference: answerKey.id,
-        },
-      })),
+      questions: document.paper.questions.map((question) => {
+        const officialAnswer = entryByQuestion.get(question.sourceNumber);
+        return officialAnswer
+          ? {
+              ...question,
+              acceptedOptionIds: officialAnswer,
+              answerKeyProvenance: {
+                source: "official" as const,
+                reference: answerKey.id,
+              },
+            }
+          : question;
+      }),
     },
   };
 }
@@ -124,15 +138,15 @@ export async function processClaimedImportJob(
       const runtime = runtimes[providerId];
       const source = await prepareSource(files, downloaded, runtime);
       const document = await runtime.provider.extract(source);
-      documents.push(withOfficialKeyProvenance(document, answerKey));
+      documents.push(applyOfficialAnswerKeyEntries(document, answerKey));
     }
 
     const reconciled = reconcileExtractions(documents);
-    await repository.completeExtraction(job.id, documents, reconciled);
+    await repository.completeExtraction(job, documents, reconciled);
     return reconciled;
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown import processing failure";
-    await repository.fail(job.id, "import_processing_failed", detail);
+    await repository.fail(job, "import_processing_failed", detail);
     throw error;
   }
 }

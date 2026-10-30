@@ -1,7 +1,9 @@
 export type PaperSummary = {
   id: string;
-  title: string;
-  date: string;
+  versionId?: string;
+  pattern: "original" | "current";
+  title: { en: string; hi: string };
+  publishedAt: string;
   questions: number;
   minutes: number;
   attempts: string;
@@ -11,8 +13,9 @@ export type PaperSummary = {
 export const samplePapers: PaperSummary[] = [
   {
     id: "neet-2025",
-    title: "NEET 2025",
-    date: "04 May 2025",
+    pattern: "original",
+    title: { en: "NEET 2025", hi: "नीट 2025" },
+    publishedAt: "2025-05-04T00:00:00.000Z",
     questions: 180,
     minutes: 180,
     attempts: "18.4k",
@@ -20,8 +23,9 @@ export const samplePapers: PaperSummary[] = [
   },
   {
     id: "neet-2024",
-    title: "NEET 2024",
-    date: "05 May 2024",
+    pattern: "original",
+    title: { en: "NEET 2024", hi: "नीट 2024" },
+    publishedAt: "2024-05-05T00:00:00.000Z",
     questions: 200,
     minutes: 200,
     attempts: "32.1k",
@@ -29,8 +33,9 @@ export const samplePapers: PaperSummary[] = [
   },
   {
     id: "neet-2023",
-    title: "NEET 2023",
-    date: "07 May 2023",
+    pattern: "original",
+    title: { en: "NEET 2023", hi: "नीट 2023" },
+    publishedAt: "2023-05-07T00:00:00.000Z",
     questions: 200,
     minutes: 200,
     attempts: "24.8k",

@@ -223,17 +223,31 @@ describe("examSessionReducer", () => {
     expect(state.submittedAt).toBe(2_000);
   });
 
-  it("auto-submits against the server-authoritative deadline", () => {
+  it("closes locally at the deadline and waits for server finalization", () => {
     const state = examSessionReducer(session(), {
       type: "TICK",
       eventId: "time-expired",
-      nowMs: 10_000,
+      nowMs: 10_001,
     });
 
-    expect(state.status).toBe("submitted");
+    expect(state.status).toBe("finalizing");
     expect(state.submissionReason).toBe("expired");
-    expect(state.submittedAt).toBe(10_000);
+    expect(state.submittedAt).toBeUndefined();
     expect(state.remainingMs).toBe(0);
+    expect(state.eventQueue.at(-1)).toMatchObject({
+      id: "time-expired",
+      occurredAt: 10_000,
+      timeSpentMs: 9_000,
+    });
+
+    const finalized = examSessionReducer(state, {
+      type: "CONFIRM_SUBMIT",
+      submittedAt: 10_050,
+    });
+
+    expect(finalized.status).toBe("submitted");
+    expect(finalized.submissionReason).toBe("expired");
+    expect(finalized.submittedAt).toBe(10_050);
   });
 
   it("records cumulative time across visits for the final answer", () => {

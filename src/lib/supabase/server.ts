@@ -38,6 +38,18 @@ export function createSupabaseAdminClient(): SupabaseClient {
   );
 }
 
+export function createSupabasePublicClient(): SupabaseClient {
+  const environment = supabasePublicEnvironment();
+
+  return createClient(environment.url, environment.anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+  });
+}
+
 export function createSupabaseAuthClient(accessToken: string): SupabaseClient {
   const environment = supabasePublicEnvironment();
 

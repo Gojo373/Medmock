@@ -1,21 +1,36 @@
-import { notFound } from "next/navigation";
+import { headers } from "next/headers";
+import { notFound, redirect } from "next/navigation";
 
 import { ExamWorkspace } from "@/features/exam/exam-workspace";
 import { redactPaperForStrictMock } from "@/features/exam/public-paper";
-import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
+import { loadPublishedPaperVersion } from "@/features/papers/server/published-paper-store";
+import { getRequestUser } from "@/lib/auth/server-auth";
 
 export default async function MockExamPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ paperId: string }>;
+  searchParams: Promise<{ version?: string | string[] }>;
 }) {
   const { paperId } = await params;
-  if (paperId !== sampleExamPaper.paperId) notFound();
+  const version = (await searchParams).version;
+  if (Array.isArray(version)) notFound();
+  const paper = await loadPublishedPaperVersion(paperId, version);
+  if (!paper) notFound();
+
+  const destination = `/papers/${paperId}/mock?version=${encodeURIComponent(paper.id)}`;
+  const requestHeaders = await headers();
+  const user = await getRequestUser(
+    new Request(`http://localhost${destination}`, { headers: requestHeaders }),
+  );
+  if (!user) redirect(`/sign-in?next=${encodeURIComponent(destination)}`);
 
   return (
     <ExamWorkspace
       mode="mock"
-      paper={redactPaperForStrictMock(sampleExamPaper)}
+      paper={redactPaperForStrictMock(paper)}
+      userId={user.id}
     />
   );
 }

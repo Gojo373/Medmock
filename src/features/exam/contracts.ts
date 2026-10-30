@@ -56,6 +56,7 @@ export const CreateAttemptResponseSchema = z
     status: z.literal("active"),
     startedAt: z.string().datetime(),
     deadlineAt: z.string().datetime(),
+    serverNow: z.string().datetime(),
   })
   .strict();
 
@@ -70,6 +71,7 @@ export const AppendAnswerEventsResponseSchema = z
     acceptedEventIds: z.array(z.string()),
     duplicateEventIds: z.array(z.string()),
     eventCount: z.number().int().nonnegative(),
+    integrityStatus: z.enum(["clear", "flagged"]).optional(),
   })
   .strict();
 

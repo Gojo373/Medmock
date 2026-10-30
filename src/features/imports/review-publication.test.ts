@@ -147,4 +147,41 @@ describe("import review and atomic publication", () => {
       }),
     );
   });
+
+  it("returns existing matching publication IDs on a published retry", async () => {
+    const reviewed = draft();
+    reviewed.reviewFlags.forEach((flag) => {
+      flag.resolved = true;
+    });
+    const store = repository(reviewed);
+    store.get.mockResolvedValue({
+      status: "published",
+      reconciled: reviewed,
+      reviewed,
+      publishedOriginalVersionId: "neet-2025-original-r1",
+      publishedCurrentVersionId: "neet-2025-current-r2",
+    });
+
+    await expect(
+      publishReviewedImport(store, "import-1", "admin-1", {
+        approved: true,
+        paperId: "neet-2025",
+        originalRevision: 1,
+        currentRevision: 2,
+      }),
+    ).resolves.toEqual({
+      originalVersionId: "neet-2025-original-r1",
+      currentVersionId: "neet-2025-current-r2",
+    });
+    expect(store.publish).not.toHaveBeenCalled();
+
+    await expect(
+      publishReviewedImport(store, "import-1", "admin-1", {
+        approved: true,
+        paperId: "neet-2025",
+        originalRevision: 3,
+        currentRevision: 4,
+      }),
+    ).rejects.toThrow("Import was already published with different versions.");
+  });
 });

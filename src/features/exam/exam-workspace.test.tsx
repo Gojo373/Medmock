@@ -50,7 +50,7 @@ function fixture(): PaperVersion {
 describe("ExamWorkspace", () => {
   it("conceals correctness while a mock attempt is active", async () => {
     const user = userEvent.setup();
-    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+    render(<ExamWorkspace mode="mock" paper={fixture()} userId="student-ui" />);
 
     await user.click(
       screen.getByRole("button", { name: "A. Mass times acceleration" }),
@@ -64,7 +64,7 @@ describe("ExamWorkspace", () => {
 
   it("reveals the reviewed answer and locks a practice choice", async () => {
     const user = userEvent.setup();
-    render(<ExamWorkspace mode="practice" paper={fixture()} />);
+    render(<ExamWorkspace mode="practice" paper={fixture()} userId="student-ui" />);
 
     const wrongOption = screen.getByRole("button", {
       name: "B. Mass divided by acceleration",
@@ -81,7 +81,7 @@ describe("ExamWorkspace", () => {
 
   it("opens a confirmation dialog before manual submission", async () => {
     const user = userEvent.setup();
-    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+    render(<ExamWorkspace mode="mock" paper={fixture()} userId="student-ui" />);
 
     await user.click(screen.getByRole("button", { name: "Submit test" }));
 
@@ -93,7 +93,7 @@ describe("ExamWorkspace", () => {
 
   it("localizes exam controls, timer, palette, sync state, and submission dialog in Hindi", async () => {
     const user = userEvent.setup();
-    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+    render(<ExamWorkspace mode="mock" paper={fixture()} userId="student-ui" />);
 
     await user.click(screen.getByRole("button", { name: "Switch question language" }));
 
@@ -111,7 +111,7 @@ describe("ExamWorkspace", () => {
 
   it("traps dialog focus, makes the background inert, closes on Escape, and restores focus", async () => {
     const user = userEvent.setup();
-    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+    render(<ExamWorkspace mode="mock" paper={fixture()} userId="student-ui" />);
 
     const submit = screen.getByRole("button", { name: "Submit test" });
     await user.click(submit);

@@ -5,17 +5,24 @@ import { useLocale } from "@/features/localization/locale-provider";
 import { cn } from "@/lib/cn";
 
 export function PaperCard({ paper }: { paper: PaperSummary }) {
-  const { copy } = useLocale();
+  const { copy, locale } = useLocale();
+  const href = `/papers/${paper.id}${
+    paper.versionId ? `?version=${encodeURIComponent(paper.versionId)}` : ""
+  }`;
+  const publishedDate = new Intl.DateTimeFormat(
+    locale === "en" ? "en-IN" : "hi-IN",
+    { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" },
+  ).format(new Date(paper.publishedAt));
 
   return (
     <article className={cn("paper-card", paper.gradient)}>
       <div className="paper-card__topline">
         <span><CheckCircle2 aria-hidden="true" size={15} /> {copy.library.reviewed}</span>
-        <span>{paper.date}</span>
+        <span>{publishedDate}</span>
       </div>
       <div>
         <p className="paper-card__code">{paper.id.toUpperCase()}</p>
-        <h3>{paper.title}</h3>
+        <h3>{paper.title[locale]}</h3>
       </div>
       <div className="paper-card__meta">
         <span><ListChecks aria-hidden="true" size={16} /> {paper.questions} {copy.library.questions}</span>
@@ -23,7 +30,7 @@ export function PaperCard({ paper }: { paper: PaperSummary }) {
         <span><Languages aria-hidden="true" size={16} /> {copy.library.bilingual}</span>
         <span><Users aria-hidden="true" size={16} /> {paper.attempts}</span>
       </div>
-      <a className="paper-card__link" href={`/papers/${paper.id}`}>
+      <a className="paper-card__link" href={href}>
         {copy.library.start}
         <ArrowUpRight aria-hidden="true" size={17} />
       </a>

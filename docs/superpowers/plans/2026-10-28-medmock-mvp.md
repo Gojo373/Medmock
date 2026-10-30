@@ -101,10 +101,42 @@ Interfaces: Finalizes the database/API contract and deployable application.
 - [ ] Perform whole-branch review and fix Critical/Important findings with RED-GREEN tests.
 - [ ] Commit production hardening.
 
-Continuation note (2026-10-29): the baseline hardening and first review-fix pass
-are committed through `cd58c22`. A second RED→GREEN pass is active and
-uncommitted: real timing/serialized synchronization and the authenticated
-Supabase dashboard are focused-GREEN; import rule preservation and explicit
-review decisions are implemented; the exact current RED is the missing
-`buildPublishedPaperVersionsFromImport()` dual immutable publication builder.
-See `docs/PROJECT_HANDOFF.md` and the SDD progress ledger before resuming.
+Continuation note (2026-10-30): local implementation and verification are
+committed through `924597f` (21 files / 95 tests; lint, type-check, and build
+passed). The fresh whole-branch review returned **Ready to merge: No** with 3
+Critical, 15 Important, and 3 Minor findings. Task 6 remains open. Perform one
+strict RED→GREEN fix pass for all verified Critical/Important findings, defer the
+Minor findings, rerun every local gate, then complete the external Supabase,
+provider, Vercel, Linux-browser, and load validations. The exact queue and
+continuation prompt are in `docs/PROJECT_HANDOFF.md`; the full review is in the
+plan workspace.
+
+Active interruption note (2026-10-30 13:00 IST): Critical finding 1 is
+uncommitted focused-GREEN (expiry clamping, distinct finalizing state, and retry
+until server acknowledgement; 3 files / 16 tests passed). Critical finding 2 is
+the exact active RED: the attempt/dashboard timestamp tests use realistic
+PostgREST `+00:00` values and currently fail at the missing adapter normalizer and
+Zod datetime boundary. Resume from the top checkpoint in
+`docs/PROJECT_HANDOFF.md`; do not restart finding 1 or discard the dirty files.
+
+Latest interruption note (2026-10-30 13:11 IST): Critical finding 2 is now
+uncommitted focused-GREEN (2 files / 16 tests passed) through a shared strict
+database timestamp normalizer applied at attempt/dashboard adapter boundaries.
+Critical finding 3 is the active RED. Library/store tests were observed failing
+because the published-paper store is missing and the landing page remains
+fixture-backed; a paper detail/mock/practice route test was then added but not
+run before the user paused. Resume from the newest top checkpoint in
+`docs/PROJECT_HANDOFF.md`, run all three finding-3 files RED, implement the
+Supabase published-paper journey and published-only read policy, then continue
+Important findings 4–18. Preserve every dirty/untracked file and do not touch
+untracked `AGENTS.md`.
+
+Local fix-pass completion note (2026-10-30 17:20 IST): all 3 Critical and all
+15 Important final-review findings now have locally observed RED→GREEN coverage
+or locally executable production-path prerequisites. Fresh verification passed
+26 files / 116 tests; lint, type-check, and production build exited 0 with 14
+static pages plus all dynamic routes and the Next 16 Proxy compiled. Playwright
+still exits before discovery on Android with `Unsupported platform: android`.
+The 3 Minor findings remain deferred. Task 6 stays open solely for the documented
+staging Supabase/RLS/concurrency, live provider, deployed auth/Vercel/signed
+upload, Linux Playwright/axe, and 500-concurrent-attempt validations.

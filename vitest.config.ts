@@ -11,10 +11,14 @@ export default defineConfig({
     css: true,
     exclude: [...configDefaults.exclude, "tests/e2e/**"],
     maxWorkers: process.platform === "android" ? 1 : undefined,
+    testTimeout: process.platform === "android" ? 15_000 : undefined,
   },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "server-only": fileURLToPath(
+        new URL("./src/test/server-only.ts", import.meta.url),
+      ),
     },
   },
 });

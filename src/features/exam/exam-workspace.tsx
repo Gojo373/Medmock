@@ -27,8 +27,12 @@ import {
   IndexedDbAttemptPersistence,
 } from "@/features/exam/persistence";
 import {
+  buildAttemptGenerationStorageKey,
+  buildAttemptRecoveryIdentity,
   createOnlineAttemptRecovery,
+  createRetryingFinalizer,
   rebindExamSessionAttempt,
+  validateRecoverableSession,
 } from "@/features/exam/recovery";
 import {
   createExamSession,
@@ -36,14 +40,10 @@ import {
   mergeAnswerEvents,
   type ExamMode,
 } from "@/features/exam/session";
-import { formatExamTime } from "@/features/exam/timer";
+import { formatExamTime, getRemainingTimeMs } from "@/features/exam/timer";
 
 function eventId() {
   return globalThis.crypto?.randomUUID?.() ?? "event-" + Date.now() + "-" + Math.random();
-}
-
-function idempotencyStorageKey(paperId: string, mode: ExamMode) {
-  return `medmock:idempotency:${paperId}:${mode}`;
 }
 
 const examCopy = {
@@ -152,9 +152,11 @@ const syncCopy: Record<"en" | "hi", Record<string, string>> = {
 export function ExamWorkspace({
   paper,
   mode,
+  userId,
 }: {
   paper: PaperVersion;
   mode: ExamMode;
+  userId: string;
 }) {
   const [locale, setLocale] = useState<"en" | "hi">("en");
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -166,21 +168,46 @@ export function ExamWorkspace({
   const attemptRecoveryRef = useRef<
     ReturnType<typeof createOnlineAttemptRecovery> | undefined
   >(undefined);
-  const expirySubmissionRef = useRef(false);
   const backgroundRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
+  const serverClockOffsetRef = useRef(0);
+  const authoritativeNow = () => Date.now() + serverClockOffsetRef.current;
+  const [recoveryIdentity] = useState(() => {
+    const generationStorageKey = buildAttemptGenerationStorageKey({
+      userId,
+      paperVersionId: paper.id,
+      mode,
+    });
+    let generation =
+      typeof window === "undefined"
+        ? "server-render"
+        : window.localStorage.getItem(generationStorageKey);
+    if (!generation || generation === "server-render") {
+      generation = globalThis.crypto?.randomUUID?.() ?? `generation-${Date.now()}`;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(generationStorageKey, generation);
+      }
+    }
+    return buildAttemptRecoveryIdentity({
+      userId,
+      paperVersionId: paper.id,
+      mode,
+      generation,
+    });
+  });
   const [state, dispatch] = useReducer(
     examSessionReducer,
     null,
     () => {
       const nowMs = Date.now();
       return createExamSession({
-        attemptId: "local-" + paper.id,
+        attemptId: recoveryIdentity.localAttemptId,
         paper,
         mode,
         nowMs,
         deadlineAtMs: nowMs + paper.durationMinutes * 60_000,
+        recoveryIdentity,
       });
     },
   );
@@ -193,7 +220,10 @@ export function ExamWorkspace({
   }, [state]);
 
   useEffect(() => {
-    const dialogOpen = state.status === "submit_pending" || state.status === "submitted";
+    const dialogOpen =
+      state.status === "submit_pending" ||
+      state.status === "finalizing" ||
+      state.status === "submitted";
     if (!dialogOpen) return;
 
     const background = backgroundRef.current;
@@ -215,7 +245,7 @@ export function ExamWorkspace({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && state.status === "submit_pending") {
         event.preventDefault();
-        dispatch({ type: "CANCEL_SUBMIT", occurredAt: Date.now() });
+        dispatch({ type: "CANCEL_SUBMIT", occurredAt: authoritativeNow() });
         return;
       }
       if (event.key !== "Tab" || focusable.length === 0) return;
@@ -243,7 +273,7 @@ export function ExamWorkspace({
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => dispatch({ type: "TICK", eventId: eventId(), nowMs: Date.now() }),
+      () => dispatch({ type: "TICK", eventId: eventId(), nowMs: authoritativeNow() }),
       1_000,
     );
 
@@ -255,14 +285,16 @@ export function ExamWorkspace({
     let cancelled = false;
     const persistence = new IndexedDbAttemptPersistence();
     persistenceRef.current = persistence;
-    const localAttemptId = "local-" + paper.id;
+    const localAttemptId = recoveryIdentity.localAttemptId;
 
     async function restoreLocalSession() {
       const saved = await persistence.loadSession(localAttemptId);
       const queuedEvents = await persistence.getQueuedEvents(localAttemptId);
       if (!saved && queuedEvents.length === 0) return;
 
-      const baseSession = saved ?? stateRef.current;
+      const baseSession = saved
+        ? validateRecoverableSession(saved, recoveryIdentity)
+        : stateRef.current;
       const eventQueue = mergeAnswerEvents(baseSession.eventQueue, queuedEvents);
       const restored = {
         ...baseSession,
@@ -277,13 +309,7 @@ export function ExamWorkspace({
     }
 
     async function connect() {
-      const storageKey = idempotencyStorageKey(paper.id, mode);
-      let idempotencyKey = window.localStorage.getItem(storageKey);
-      if (!idempotencyKey) {
-        idempotencyKey = crypto.randomUUID();
-        window.localStorage.setItem(storageKey, idempotencyKey);
-      }
-
+      const requestStartedAt = Date.now();
       const response = await fetch("/api/attempts", {
         method: "POST",
         credentials: "same-origin",
@@ -293,21 +319,37 @@ export function ExamWorkspace({
           mode,
           strict: mode === "mock",
           visibility: "public",
-          idempotencyKey,
+          idempotencyKey: recoveryIdentity.idempotencyKey,
         }),
       });
 
       if (!response.ok) throw new Error("Attempt creation failed.");
       const created = await response.json();
+      const responseReceivedAt = Date.now();
+      serverClockOffsetRef.current =
+        Date.parse(created.serverNow) -
+        (requestStartedAt + responseReceivedAt) / 2;
       const saved = await persistence.loadSession(created.attemptId);
       const serverQueuedEvents = await persistence.getQueuedEvents(created.attemptId);
       const currentSession = stateRef.current;
-      const baseSession = saved ?? currentSession;
-      const rebound = rebindExamSessionAttempt(
+      const baseSession = saved
+        ? validateRecoverableSession(saved, recoveryIdentity)
+        : validateRecoverableSession(currentSession, recoveryIdentity);
+      const reboundBase = rebindExamSessionAttempt(
         baseSession,
         created.attemptId,
         Date.parse(created.deadlineAt),
+        recoveryIdentity,
       );
+      const authoritativeNowMs = authoritativeNow();
+      const rebound = {
+        ...reboundBase,
+        nowMs: authoritativeNowMs,
+        remainingMs: getRemainingTimeMs(
+          reboundBase.deadlineAtMs,
+          authoritativeNowMs,
+        ),
+      };
       const localEvents = currentSession.attemptId.startsWith("local-")
         ? currentSession.eventQueue.map((event) => ({
             ...event,
@@ -356,8 +398,7 @@ export function ExamWorkspace({
       });
 
       if (!cancelled) {
-        await persistence.saveSession(restored);
-        await persistence.queueEvents(restored.eventQueue);
+        await persistence.migrateSessionAttempt(localAttemptId, restored);
         stateRef.current = restored;
         dispatch({ type: "RESTORE_SESSION", state: restored });
         setSyncMessage("Saved and synchronized");
@@ -392,7 +433,7 @@ export function ExamWorkspace({
       recovery.stop();
       attemptRecoveryRef.current = undefined;
     };
-  }, [mode, paper]);
+  }, [mode, paper, recoveryIdentity]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "test" || !persistenceRef.current) return;
@@ -417,7 +458,7 @@ export function ExamWorkspace({
           ? "Connected · confirm submission again"
           : "Offline · submission will retry",
       );
-      return;
+      return false;
     }
 
     try {
@@ -427,7 +468,7 @@ export function ExamWorkspace({
       }
       if (stateRef.current.eventQueue.length > 0) {
         setSyncMessage("Submission waiting for answer sync");
-        return;
+        return false;
       }
 
       const response = await fetch(`/api/attempts/${state.attemptId}/submit`, {
@@ -439,28 +480,34 @@ export function ExamWorkspace({
 
       if (!response.ok) throw new Error("Submission failed");
       const result = await response.json();
-      window.localStorage.removeItem(idempotencyStorageKey(paper.id, mode));
+      await persistenceRef.current?.retireAttempt(state.attemptId);
+      await persistenceRef.current?.retireAttempt(recoveryIdentity.localAttemptId);
+      window.localStorage.removeItem(recoveryIdentity.generationStorageKey);
       dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.parse(result.submittedAt) });
       setSyncMessage("Submitted and scored");
+      return true;
     } catch {
       setSyncMessage("Submission failed · retry safely");
+      return false;
     }
-  }, [mode, paper.id, state.attemptId]);
+  }, [recoveryIdentity, state.attemptId]);
 
   useEffect(() => {
     if (
       process.env.NODE_ENV === "test" ||
-      state.status !== "submitted" ||
+      state.status !== "finalizing" ||
       state.submissionReason !== "expired" ||
-      state.attemptId.startsWith("local-") ||
-      expirySubmissionRef.current
+      state.attemptId.startsWith("local-")
     ) return;
 
-    expirySubmissionRef.current = true;
-    confirmSubmission().catch(() => {
-      expirySubmissionRef.current = false;
-      setSyncMessage("Expiry submission will retry");
+    const finalizer = createRetryingFinalizer({
+      finalize: confirmSubmission,
+      retryDelayMs: 2_000,
+      schedule: window.setTimeout,
+      cancel: window.clearTimeout,
     });
+    finalizer.start();
+    return () => finalizer.stop();
   }, [state.status, state.submissionReason, state.attemptId, confirmSubmission]);
 
   const currentQuestion = paper.questions.find(
@@ -542,7 +589,7 @@ export function ExamWorkspace({
           <button
             className={section.id === currentSection.id ? "is-active" : ""}
             key={section.id}
-            onClick={() => navigate(section.questionIds[0], Date.now())}
+            onClick={() => navigate(section.questionIds[0], authoritativeNow())}
             type="button"
           >
             <span>{section.title[locale]}</span>
@@ -596,7 +643,7 @@ export function ExamWorkspace({
                         eventId: eventId(),
                         questionId: currentQuestion.id,
                         optionId: option.id,
-                        occurredAt: Date.now(),
+                        occurredAt: authoritativeNow(),
                       })
                     }
                     type="button"
@@ -627,7 +674,7 @@ export function ExamWorkspace({
             <div>
               <Button
                 disabled={!previousQuestion}
-                onClick={() => navigate(previousQuestion?.id, Date.now())}
+                onClick={() => navigate(previousQuestion?.id, authoritativeNow())}
                 tone="ghost"
               >
                 <ChevronLeft aria-hidden="true" size={17} /> {text.previous}
@@ -639,7 +686,7 @@ export function ExamWorkspace({
                     type: "CLEAR_RESPONSE",
                     eventId: eventId(),
                     questionId: currentQuestion.id,
-                    occurredAt: Date.now(),
+                    occurredAt: authoritativeNow(),
                   })
                 }
                 tone="ghost"
@@ -661,7 +708,7 @@ export function ExamWorkspace({
               </Button>
               <Button
                 disabled={!nextQuestion}
-                onClick={() => navigate(nextQuestion?.id, Date.now())}
+                onClick={() => navigate(nextQuestion?.id, authoritativeNow())}
               >
                 {text.saveNext} <ChevronRight aria-hidden="true" size={17} />
               </Button>
@@ -713,7 +760,7 @@ export function ExamWorkspace({
                       visited && !answered && !marked ? "is-visited" : "",
                     ].filter(Boolean).join(" ")}
                     key={question.id}
-                    onClick={() => navigate(question.id, Date.now())}
+                    onClick={() => navigate(question.id, authoritativeNow())}
                     type="button"
                   >
                     {index + 1}
@@ -739,7 +786,7 @@ export function ExamWorkspace({
             className="submit-test-button"
             onClick={(event) => {
               dialogTriggerRef.current = event.currentTarget;
-              dispatch({ type: "REQUEST_SUBMIT", eventId: eventId(), occurredAt: Date.now() });
+              dispatch({ type: "REQUEST_SUBMIT", eventId: eventId(), occurredAt: authoritativeNow() });
             }}
             tone="secondary"
           >
@@ -766,7 +813,7 @@ export function ExamWorkspace({
             <h2 id="submit-attempt-title">{text.submitTitle}</h2>
             <p id="submit-attempt-description">{text.submitDescription(answeredCount, paper.questions.length)}</p>
             <div>
-              <Button onClick={() => dispatch({ type: "CANCEL_SUBMIT", occurredAt: Date.now() })} tone="ghost">{text.keepReviewing}</Button>
+              <Button onClick={() => dispatch({ type: "CANCEL_SUBMIT", occurredAt: authoritativeNow() })} tone="ghost">{text.keepReviewing}</Button>
               <Button autoFocus data-initial-focus onClick={confirmSubmission}>
                 {text.confirmSubmission}
               </Button>
@@ -775,7 +822,7 @@ export function ExamWorkspace({
         </div>
       )}
 
-      {state.status === "submitted" && (
+      {(state.status === "finalizing" || state.status === "submitted") && (
         <div className="exam-modal-backdrop">
           <section
             aria-labelledby="submission-complete-title"
@@ -784,10 +831,14 @@ export function ExamWorkspace({
             ref={dialogRef}
             role="dialog"
           >
-            <div className="exam-submit-modal__icon is-success"><Check aria-hidden="true" /></div>
+            <div className="exam-submit-modal__icon is-success">
+              {state.status === "submitted" ? <Check aria-hidden="true" /> : <Cloud aria-hidden="true" />}
+            </div>
             <h2 id="submission-complete-title">{state.submissionReason === "expired" ? text.timeUp : text.submitted}</h2>
-            <p>{text.submittedDescription}</p>
-            <Link className="button button--primary" data-initial-focus href="/dashboard">{text.viewResults}</Link>
+            <p>{state.status === "submitted" ? text.submittedDescription : displayedSyncMessage}</p>
+            {state.status === "submitted" && (
+              <Link className="button button--primary" data-initial-focus href="/dashboard">{text.viewResults}</Link>
+            )}
           </section>
         </div>
       )}

@@ -23,7 +23,7 @@ export const PartialLocalizedTextSchema = z
 export const ExtractionOptionSchema = z
   .object({
     id: z.string().trim().min(1),
-    text: PartialLocalizedTextSchema,
+    text: PartialLocalizedTextSchema.optional(),
   })
   .strict();
 
@@ -80,10 +80,18 @@ export const ExtractionPaperSchema = z
   })
   .strict();
 
+export const OfficialAnswerKeyEntrySchema = z
+  .object({
+    sourceNumber: z.string().trim().min(1),
+    acceptedOptionIds: z.array(z.string().trim().min(1)).min(1),
+  })
+  .strict();
+
 export const ExtractionPayloadSchema = z
   .object({
     schemaVersion: z.literal(1),
     paper: ExtractionPaperSchema,
+    officialAnswerKeyEntries: z.array(OfficialAnswerKeyEntrySchema).default([]),
   })
   .strict();
 
@@ -143,10 +151,102 @@ export type ExtractionPaper = z.infer<typeof ExtractionPaperSchema>;
 export type ReviewFlag = z.infer<typeof ReviewFlagSchema>;
 export type ReconciledImport = z.infer<typeof ReconciledImportSchema>;
 
+function normalizeLocalizedProviderValue(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const localized = value as Record<string, unknown>;
+  const result = {
+    ...(typeof localized.en === "string" ? { en: localized.en } : {}),
+    ...(typeof localized.hi === "string" ? { hi: localized.hi } : {}),
+  };
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function omitNullValues(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== null),
+  );
+}
+
+export function normalizeProviderExtractionPayload(value: unknown) {
+  if (!value || typeof value !== "object") return value;
+  const payload = value as Record<string, unknown>;
+  const paper =
+    payload.paper && typeof payload.paper === "object"
+      ? (payload.paper as Record<string, unknown>)
+      : {};
+  const questions = Array.isArray(paper.questions) ? paper.questions : [];
+
+  return {
+    ...payload,
+    paper: {
+      ...paper,
+      title: normalizeLocalizedProviderValue(paper.title),
+      questions: questions.map((value) => {
+        if (!value || typeof value !== "object") return value;
+        const question = value as Record<string, unknown>;
+        const options = Array.isArray(question.options) ? question.options : [];
+        return {
+          ...question,
+          sectionId: question.sectionId ?? undefined,
+          subject: question.subject ?? undefined,
+          topic: question.topic ?? undefined,
+          stem: normalizeLocalizedProviderValue(question.stem),
+          solution: normalizeLocalizedProviderValue(question.solution),
+          options: options.map((value) => {
+            if (!value || typeof value !== "object") return value;
+            const option = value as Record<string, unknown>;
+            return {
+              ...option,
+              text: normalizeLocalizedProviderValue(option.text),
+            };
+          }),
+          confidence: omitNullValues(question.confidence),
+          answerKeyProvenance: omitNullValues(question.answerKeyProvenance),
+        };
+      }),
+    },
+  };
+}
+
+const nullableLocalizedTextJsonSchema = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["en", "hi"],
+  properties: {
+    en: { type: ["string", "null"] },
+    hi: { type: ["string", "null"] },
+  },
+} as const;
+
+const markingJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["correct", "incorrect", "unattempted"],
+  properties: {
+    correct: { type: "number" },
+    incorrect: { type: "number" },
+    unattempted: { type: "number" },
+  },
+} as const;
+
+const confidenceJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["stem", "options", "answerKey", "translation", "solution"],
+  properties: {
+    stem: { type: ["number", "null"] },
+    options: { type: ["number", "null"] },
+    answerKey: { type: ["number", "null"] },
+    translation: { type: ["number", "null"] },
+    solution: { type: ["number", "null"] },
+  },
+} as const;
+
 export const extractionResponseJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["schemaVersion", "paper"],
+  required: ["schemaVersion", "paper", "officialAnswerKeyEntries"],
   properties: {
     schemaVersion: { type: "number", enum: [1] },
     paper: {
@@ -154,9 +254,9 @@ export const extractionResponseJsonSchema = {
       additionalProperties: false,
       required: ["title", "year", "durationMinutes", "sections", "questions"],
       properties: {
-        title: { type: "object" },
-        year: { type: ["number", "null"] },
-        durationMinutes: { type: ["number", "null"] },
+        title: nullableLocalizedTextJsonSchema,
+        year: { type: ["integer", "null"] },
+        durationMinutes: { type: ["integer", "null"] },
         sections: {
           type: "array",
           items: {
@@ -166,7 +266,7 @@ export const extractionResponseJsonSchema = {
             properties: {
               id: { type: "string" },
               subject: { type: "string", enum: ["physics", "chemistry", "biology"] },
-              title: { type: "object" },
+              title: nullableLocalizedTextJsonSchema,
               questionNumbers: { type: "array", items: { type: "string" } },
               selectionLimit: { type: ["number", "null"] },
             },
@@ -180,22 +280,57 @@ export const extractionResponseJsonSchema = {
             required: [
               "sourceNumber", "sectionId", "subject", "topic", "stem",
               "options", "acceptedOptionIds", "solution", "confidence",
-              "disposition", "marking",
+              "disposition", "marking", "answerKeyProvenance",
             ],
             properties: {
               sourceNumber: { type: "string" },
               sectionId: { type: ["string", "null"] },
               subject: { type: ["string", "null"], enum: ["physics", "chemistry", "biology", null] },
               topic: { type: ["string", "null"] },
-              stem: { type: ["object", "null"] },
-              options: { type: "array", items: { type: "object" } },
+              stem: nullableLocalizedTextJsonSchema,
+              options: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["id", "text"],
+                  properties: {
+                    id: { type: "string" },
+                    text: nullableLocalizedTextJsonSchema,
+                  },
+                },
+              },
               acceptedOptionIds: { type: "array", items: { type: "string" } },
-              solution: { type: ["object", "null"] },
+              solution: nullableLocalizedTextJsonSchema,
               disposition: { type: "string", enum: ["standard", "bonus", "dropped"] },
-              marking: { type: "object" },
-              confidence: { type: "object" },
+              marking: markingJsonSchema,
+              answerKeyProvenance: {
+                type: "object",
+                additionalProperties: false,
+                required: ["source", "reference"],
+                properties: {
+                  source: {
+                    type: "string",
+                    enum: ["provider", "official", "manual"],
+                  },
+                  reference: { type: ["string", "null"] },
+                },
+              },
+              confidence: confidenceJsonSchema,
             },
           },
+        },
+      },
+    },
+    officialAnswerKeyEntries: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sourceNumber", "acceptedOptionIds"],
+        properties: {
+          sourceNumber: { type: "string" },
+          acceptedOptionIds: { type: "array", items: { type: "string" } },
         },
       },
     },
