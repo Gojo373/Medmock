@@ -62,6 +62,7 @@ function answerEvent(attemptId: string, eventId = crypto.randomUUID()) {
     selectedOptionId: "B",
     occurredAt: startedAtMs + 1_000,
     clientSequence: 1,
+    timeSpentMs: 42_000,
   };
 }
 

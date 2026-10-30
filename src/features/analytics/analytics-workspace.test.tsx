@@ -1,11 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AnalyticsShell,
   type AttemptHistoryItem,
 } from "@/features/analytics/analytics-workspace";
+import * as analyticsWorkspace from "@/features/analytics/analytics-workspace";
 import { buildLeaderboard } from "@/features/analytics/analytics";
 import { AttemptSchema, type Attempt } from "@/features/exam/domain";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
@@ -120,6 +121,8 @@ function renderWorkspace() {
   );
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("AnalyticsShell", () => {
   it("summarizes a reviewed result and keeps percentile provisional", () => {
     renderWorkspace();
@@ -148,6 +151,7 @@ describe("AnalyticsShell", () => {
 
   it("shows attempt history and updates the local leaderboard privacy control", async () => {
     const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ hideDisplayName: true })));
     renderWorkspace();
 
     const history = screen.getByRole("heading", { name: "Attempt history" }).closest("section")!;
@@ -161,5 +165,78 @@ describe("AnalyticsShell", () => {
     const currentRow = screen.getByRole("row", { name: /Anonymous aspirant/ });
     expect(currentRow).toHaveTextContent("Anonymous aspirant");
     expect(currentRow).not.toHaveTextContent("You");
+  });
+
+  it("rolls back an optimistic privacy change and announces a failed update", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({ error: "service_unavailable" }, { status: 503 }),
+      ),
+    );
+    renderWorkspace();
+
+    const privacy = screen.getByRole("checkbox", {
+      name: "Hide my name on public rankings",
+    });
+    await user.click(privacy);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Privacy could not be updated. Your previous setting was restored.",
+    );
+    expect(privacy).not.toBeChecked();
+    expect(screen.getByRole("row", { name: /You/ })).toBeInTheDocument();
+  });
+});
+
+describe("AnalyticsEmptyState", () => {
+  it("explains the empty dashboard in English and Hindi", async () => {
+    const user = userEvent.setup();
+    const AnalyticsEmptyState = (
+      analyticsWorkspace as typeof analyticsWorkspace & {
+        AnalyticsEmptyState: React.ComponentType;
+      }
+    ).AnalyticsEmptyState;
+
+    render(<AnalyticsEmptyState />);
+    expect(
+      screen.getByRole("heading", { name: "Your results will appear here" }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Switch analytics language" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "आपके परिणाम यहाँ दिखाई देंगे" }),
+    ).toBeInTheDocument();
+  });
+
+  it("provides a labelled loading state while dashboard data streams", () => {
+    const AnalyticsLoadingState = (
+      analyticsWorkspace as typeof analyticsWorkspace & {
+        AnalyticsLoadingState: React.ComponentType;
+      }
+    ).AnalyticsLoadingState;
+
+    render(<AnalyticsLoadingState />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading your dashboard…");
+  });
+
+  it("provides a retry action when dashboard data cannot be loaded", async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn();
+    const AnalyticsErrorState = (
+      analyticsWorkspace as typeof analyticsWorkspace & {
+        AnalyticsErrorState: React.ComponentType<{ retry: () => void }>;
+      }
+    ).AnalyticsErrorState;
+
+    render(<AnalyticsErrorState retry={retry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your dashboard could not be loaded.",
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 });

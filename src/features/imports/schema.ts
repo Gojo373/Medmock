@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { SubjectSchema } from "@/features/exam/domain";
+import {
+  AnswerKeyProvenanceSchema,
+  MarkingSchemeSchema,
+  QuestionDispositionSchema,
+  SubjectSchema,
+} from "@/features/exam/domain";
 
 export const ExtractionProviderIdSchema = z.enum(["openai", "gemini"]);
 export const ProviderSelectionSchema = z.enum(["openai", "gemini", "both"]);
@@ -42,7 +47,26 @@ export const ExtractionQuestionSchema = z
     options: z.array(ExtractionOptionSchema).default([]),
     acceptedOptionIds: z.array(z.string().trim().min(1)).default([]),
     solution: PartialLocalizedTextSchema.optional(),
+    disposition: QuestionDispositionSchema.default("standard"),
+    marking: MarkingSchemeSchema.default({
+      correct: 4,
+      incorrect: -1,
+      unattempted: 0,
+    }),
+    answerKeyProvenance: AnswerKeyProvenanceSchema.default({
+      source: "provider",
+    }),
     confidence: FieldConfidenceSchema.default({}),
+  })
+  .strict();
+
+export const ExtractionSectionSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    subject: SubjectSchema,
+    title: PartialLocalizedTextSchema,
+    questionNumbers: z.array(z.string().trim().min(1)).min(1),
+    selectionLimit: z.number().int().positive().nullable().optional(),
   })
   .strict();
 
@@ -51,6 +75,7 @@ export const ExtractionPaperSchema = z
     title: PartialLocalizedTextSchema.optional(),
     year: z.number().int().min(2000).max(2200).nullable().optional(),
     durationMinutes: z.number().int().positive().nullable().optional(),
+    sections: z.array(ExtractionSectionSchema).default([]),
     questions: z.array(ExtractionQuestionSchema).default([]),
   })
   .strict();
@@ -62,13 +87,18 @@ export const ExtractionPayloadSchema = z
   })
   .strict();
 
-export const ExtractionSourceSchema = z
+export const ExtractionFileSourceSchema = z
   .object({
     fileId: z.string().trim().min(1),
     fileName: z.string().trim().min(1),
     mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]),
   })
   .strict();
+
+export const ExtractionSourceSchema = ExtractionFileSourceSchema.extend({
+  answerKey: ExtractionFileSourceSchema.optional(),
+  solution: ExtractionFileSourceSchema.optional(),
+}).strict();
 
 export const ExtractionDocumentSchema = ExtractionPayloadSchema.extend({
   provider: ExtractionProviderIdSchema,
@@ -122,11 +152,26 @@ export const extractionResponseJsonSchema = {
     paper: {
       type: "object",
       additionalProperties: false,
-      required: ["title", "year", "durationMinutes", "questions"],
+      required: ["title", "year", "durationMinutes", "sections", "questions"],
       properties: {
         title: { type: "object" },
         year: { type: ["number", "null"] },
         durationMinutes: { type: ["number", "null"] },
+        sections: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "subject", "title", "questionNumbers", "selectionLimit"],
+            properties: {
+              id: { type: "string" },
+              subject: { type: "string", enum: ["physics", "chemistry", "biology"] },
+              title: { type: "object" },
+              questionNumbers: { type: "array", items: { type: "string" } },
+              selectionLimit: { type: ["number", "null"] },
+            },
+          },
+        },
         questions: {
           type: "array",
           items: {
@@ -135,6 +180,7 @@ export const extractionResponseJsonSchema = {
             required: [
               "sourceNumber", "sectionId", "subject", "topic", "stem",
               "options", "acceptedOptionIds", "solution", "confidence",
+              "disposition", "marking",
             ],
             properties: {
               sourceNumber: { type: "string" },
@@ -145,6 +191,8 @@ export const extractionResponseJsonSchema = {
               options: { type: "array", items: { type: "object" } },
               acceptedOptionIds: { type: "array", items: { type: "string" } },
               solution: { type: ["object", "null"] },
+              disposition: { type: "string", enum: ["standard", "bonus", "dropped"] },
+              marking: { type: "object" },
               confidence: { type: "object" },
             },
           },

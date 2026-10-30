@@ -13,10 +13,11 @@ export type AnswerEvent = {
   id: string;
   attemptId: string;
   questionId: string;
-  type: "answer_selected" | "answer_cleared";
+  type: "answer_selected" | "answer_cleared" | "time_spent";
   selectedOptionId?: string;
   occurredAt: number;
   clientSequence: number;
+  timeSpentMs: number;
 };
 
 export type SessionAnswer = {
@@ -43,6 +44,8 @@ export type ExamSessionState = {
   feedbackByQuestion: Record<string, PracticeFeedback>;
   eventQueue: AnswerEvent[];
   nextClientSequence: number;
+  timeSpentByQuestionMs: Record<string, number>;
+  questionEnteredAtMs: number;
   nowMs: number;
   deadlineAtMs: number;
   remainingMs: number;
@@ -57,7 +60,7 @@ export type ExamSessionState = {
 export type ExamSessionAction =
   | { type: "RESTORE_SESSION"; state: ExamSessionState }
   | { type: "ACK_EVENTS"; eventIds: string[] }
-  | { type: "NAVIGATE"; questionId: string }
+  | { type: "NAVIGATE"; eventId: string; questionId: string; occurredAt: number }
   | { type: "TOGGLE_REVIEW"; questionId: string }
   | {
       type: "SELECT_OPTION";
@@ -72,10 +75,10 @@ export type ExamSessionAction =
       questionId: string;
       occurredAt: number;
     }
-  | { type: "REQUEST_SUBMIT" }
-  | { type: "CANCEL_SUBMIT" }
+  | { type: "REQUEST_SUBMIT"; eventId: string; occurredAt: number }
+  | { type: "CANCEL_SUBMIT"; occurredAt: number }
   | { type: "CONFIRM_SUBMIT"; submittedAt: number }
-  | { type: "TICK"; nowMs: number };
+  | { type: "TICK"; eventId: string; nowMs: number };
 
 export function createExamSession({
   attemptId,
@@ -109,6 +112,8 @@ export function createExamSession({
     feedbackByQuestion: {},
     eventQueue: [],
     nextClientSequence: 1,
+    timeSpentByQuestionMs: {},
+    questionEnteredAtMs: nowMs,
     nowMs,
     deadlineAtMs,
     remainingMs: getRemainingTimeMs(deadlineAtMs, nowMs),
@@ -176,6 +181,33 @@ function appendEvent(
   };
 }
 
+function recordCurrentQuestionTime(
+  state: ExamSessionState,
+  eventId: string,
+  occurredAt: number,
+) {
+  const elapsedMs = Math.max(0, occurredAt - state.questionEnteredAtMs);
+  const timeSpentMs =
+    (state.timeSpentByQuestionMs[state.currentQuestionId] ?? 0) + elapsedMs;
+  const eventState = appendEvent(state, {
+    id: eventId,
+    questionId: state.currentQuestionId,
+    type: "time_spent",
+    occurredAt,
+    timeSpentMs,
+  });
+
+  return {
+    ...state,
+    ...eventState,
+    timeSpentByQuestionMs: {
+      ...state.timeSpentByQuestionMs,
+      [state.currentQuestionId]: timeSpentMs,
+    },
+    questionEnteredAtMs: occurredAt,
+  };
+}
+
 export function examSessionReducer(
   state: ExamSessionState,
   action: ExamSessionAction,
@@ -194,8 +226,13 @@ export function examSessionReducer(
     const remainingMs = getRemainingTimeMs(state.deadlineAtMs, action.nowMs);
 
     if (remainingMs === 0 && state.status !== "submitted") {
+      const timedState = recordCurrentQuestionTime(
+        state,
+        action.eventId,
+        action.nowMs,
+      );
       return {
-        ...state,
+        ...timedState,
         nowMs: action.nowMs,
         remainingMs,
         status: "submitted",
@@ -213,13 +250,19 @@ export function examSessionReducer(
 
   if (action.type === "NAVIGATE") {
     getQuestion(state, action.questionId);
+    if (action.questionId === state.currentQuestionId) return state;
+    const timedState = recordCurrentQuestionTime(
+      state,
+      action.eventId,
+      action.occurredAt,
+    );
 
     return {
-      ...state,
+      ...timedState,
       currentQuestionId: action.questionId,
-      visitedQuestionIds: state.visitedQuestionIds.includes(action.questionId)
-        ? state.visitedQuestionIds
-        : [...state.visitedQuestionIds, action.questionId],
+      visitedQuestionIds: timedState.visitedQuestionIds.includes(action.questionId)
+        ? timedState.visitedQuestionIds
+        : [...timedState.visitedQuestionIds, action.questionId],
       limitWarning: undefined,
     };
   }
@@ -260,6 +303,9 @@ export function examSessionReducer(
       type: "answer_selected",
       selectedOptionId: action.optionId,
       occurredAt: action.occurredAt,
+      timeSpentMs:
+        (state.timeSpentByQuestionMs[action.questionId] ?? 0) +
+        Math.max(0, action.occurredAt - state.questionEnteredAtMs),
     });
     const answers = {
       ...state.answers,
@@ -287,6 +333,11 @@ export function examSessionReducer(
       ...state,
       ...eventState,
       answers,
+      timeSpentByQuestionMs: {
+        ...state.timeSpentByQuestionMs,
+        [action.questionId]: eventState.eventQueue.at(-1)!.timeSpentMs,
+      },
+      questionEnteredAtMs: action.occurredAt,
       feedbackByQuestion,
       limitWarning: undefined,
     };
@@ -304,6 +355,9 @@ export function examSessionReducer(
       questionId: action.questionId,
       type: "answer_cleared",
       occurredAt: action.occurredAt,
+      timeSpentMs:
+        (state.timeSpentByQuestionMs[action.questionId] ?? 0) +
+        Math.max(0, action.occurredAt - state.questionEnteredAtMs),
     });
     const answers = { ...state.answers };
     delete answers[action.questionId];
@@ -312,16 +366,28 @@ export function examSessionReducer(
       ...state,
       ...eventState,
       answers,
+      timeSpentByQuestionMs: {
+        ...state.timeSpentByQuestionMs,
+        [action.questionId]: eventState.eventQueue.at(-1)!.timeSpentMs,
+      },
+      questionEnteredAtMs: action.occurredAt,
       limitWarning: undefined,
     };
   }
 
   if (action.type === "REQUEST_SUBMIT" && state.status === "active") {
-    return { ...state, status: "submit_pending" };
+    return {
+      ...recordCurrentQuestionTime(state, action.eventId, action.occurredAt),
+      status: "submit_pending",
+    };
   }
 
   if (action.type === "CANCEL_SUBMIT" && state.status === "submit_pending") {
-    return { ...state, status: "active" };
+    return {
+      ...state,
+      status: "active",
+      questionEnteredAtMs: action.occurredAt,
+    };
   }
 
   if (action.type === "CONFIRM_SUBMIT" && state.status === "submit_pending") {
@@ -355,16 +421,27 @@ export function mergeAnswerEvents(
 }
 
 export function materializeAnswers(events: AnswerEvent[]) {
-  const answers: Record<string, { selectedOptionId: string; answeredAt: number }> = {};
+  const answers: Record<
+    string,
+    { selectedOptionId: string; answeredAt: number; timeSpentMs: number }
+  > = {};
+  const timeSpentByQuestionMs: Record<string, number> = {};
 
   for (const event of mergeAnswerEvents([], events)) {
+    timeSpentByQuestionMs[event.questionId] = Math.max(
+      timeSpentByQuestionMs[event.questionId] ?? 0,
+      event.timeSpentMs,
+    );
     if (event.type === "answer_cleared") {
       delete answers[event.questionId];
-    } else if (event.selectedOptionId) {
+    } else if (event.type === "answer_selected" && event.selectedOptionId) {
       answers[event.questionId] = {
         selectedOptionId: event.selectedOptionId,
         answeredAt: event.occurredAt,
+        timeSpentMs: event.timeSpentMs,
       };
+    } else if (answers[event.questionId]) {
+      answers[event.questionId].timeSpentMs = timeSpentByQuestionMs[event.questionId];
     }
   }
 

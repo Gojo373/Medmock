@@ -4,6 +4,98 @@ import {
   type ExamSessionState,
 } from "@/features/exam/session";
 
+type EventSyncResponse = {
+  acceptedEventIds: string[];
+  duplicateEventIds: string[];
+};
+
+function normalizePersistedAnswerEvent(value: AnswerEvent): AnswerEvent {
+  return {
+    ...value,
+    timeSpentMs:
+      Number.isFinite(value.timeSpentMs) && value.timeSpentMs >= 0
+        ? value.timeSpentMs
+        : 0,
+  };
+}
+
+export function normalizePersistedExamSession(value: unknown): ExamSessionState {
+  if (!value || typeof value !== "object") {
+    throw new Error("Saved exam session is invalid.");
+  }
+
+  const state = value as ExamSessionState;
+  const eventQueue = Array.isArray(state.eventQueue)
+    ? state.eventQueue.map(normalizePersistedAnswerEvent)
+    : [];
+  const timeSpentByQuestionMs = {
+    ...(state.timeSpentByQuestionMs ?? {}),
+  };
+
+  for (const event of eventQueue) {
+    timeSpentByQuestionMs[event.questionId] = Math.max(
+      timeSpentByQuestionMs[event.questionId] ?? 0,
+      event.timeSpentMs,
+    );
+  }
+
+  const nowMs = Number.isFinite(state.nowMs) ? state.nowMs : Date.now();
+  return {
+    ...state,
+    eventQueue,
+    timeSpentByQuestionMs,
+    questionEnteredAtMs: Number.isFinite(state.questionEnteredAtMs)
+      ? state.questionEnteredAtMs
+      : nowMs,
+    nextClientSequence: Math.max(
+      Number.isFinite(state.nextClientSequence) ? state.nextClientSequence : 1,
+      1,
+      ...eventQueue.map((event) => event.clientSequence + 1),
+    ),
+  };
+}
+
+export function createAttemptEventSyncController({
+  getEvents,
+  sendEvents,
+  acknowledge,
+}: {
+  getEvents: () => AnswerEvent[];
+  sendEvents: (events: AnswerEvent[]) => Promise<EventSyncResponse>;
+  acknowledge: (eventIds: string[]) => Promise<void>;
+}) {
+  let requested = false;
+  let running: Promise<void> | undefined;
+
+  async function drain() {
+    while (requested) {
+      requested = false;
+      const events = getEvents();
+      if (events.length === 0) continue;
+
+      const result = await sendEvents(events);
+      await acknowledge([
+        ...result.acceptedEventIds,
+        ...result.duplicateEventIds,
+      ]);
+
+      if (getEvents().length > 0) requested = true;
+    }
+  }
+
+  return {
+    request() {
+      requested = true;
+      if (!running) {
+        running = drain().finally(() => {
+          running = undefined;
+        });
+      }
+      return running;
+    },
+  };
+}
+
 const defaultDatabaseName = "medmock-attempts";
 const databaseVersion = 1;
 const sessionStoreName = "sessions";
@@ -66,7 +158,7 @@ export class IndexedDbAttemptPersistence {
       transaction.objectStore(sessionStoreName).get(attemptId),
     );
     await transactionDone(transaction);
-    return result;
+    return result ? normalizePersistedExamSession(result) : undefined;
   }
 
   async queueEvents(events: AnswerEvent[]) {
@@ -89,7 +181,7 @@ export class IndexedDbAttemptPersistence {
     const index = transaction.objectStore(eventStoreName).index("attemptId");
     const events = await requestResult<AnswerEvent[]>(index.getAll(attemptId));
     await transactionDone(transaction);
-    return mergeAnswerEvents([], events);
+    return mergeAnswerEvents([], events.map(normalizePersistedAnswerEvent));
   }
 
   async markEventsSynced(eventIds: string[]) {

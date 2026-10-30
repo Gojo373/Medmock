@@ -54,6 +54,20 @@ export function createOpenAIExtractionProvider({
   return {
     id: "openai",
     async extract(source) {
+      const supportingFiles = [
+        source.answerKey
+          ? {
+              type: "input_file",
+              file_id: source.answerKey.fileId,
+            }
+          : undefined,
+        source.solution
+          ? {
+              type: "input_file",
+              file_id: source.solution.fileId,
+            }
+          : undefined,
+      ].filter((item): item is { type: string; file_id: string } => Boolean(item));
       const response = await client.responses.parse({
         model,
         input: [
@@ -68,9 +82,11 @@ export function createOpenAIExtractionProvider({
                 type: "input_file",
                 file_id: source.fileId,
               },
+              ...supportingFiles,
               {
                 type: "input_text",
-                text: "Return the complete paper using the configured extraction schema.",
+                text:
+                  "The first file is the question paper. Any second file is the official answer key and overrides model suggestions. Any third file is the solution booklet. Return the complete paper using the configured extraction schema.",
               },
             ],
           },
@@ -104,6 +120,14 @@ export function createGeminiExtractionProvider({
   return {
     id: "gemini",
     async extract(source) {
+      const supportingFiles = [source.answerKey, source.solution]
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .map((item) => ({
+          fileData: {
+            fileUri: item.fileId,
+            mimeType: item.mimeType,
+          },
+        }));
       const response = await client.models.generateContent({
         model,
         contents: [
@@ -116,7 +140,12 @@ export function createGeminiExtractionProvider({
                   mimeType: source.mimeType,
                 },
               },
-              { text: extractionPrompt },
+              ...supportingFiles,
+              {
+                text:
+                  extractionPrompt +
+                  " The first file is the question paper. Any second file is the official answer key and overrides model suggestions. Any third file is the solution booklet.",
+              },
             ],
           },
         ],

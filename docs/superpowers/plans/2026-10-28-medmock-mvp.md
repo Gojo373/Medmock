@@ -100,3 +100,11 @@ Interfaces: Finalizes the database/API contract and deployable application.
 - [ ] Run the complete unit suite, lint, type-check, production build, and browser smoke tests.
 - [ ] Perform whole-branch review and fix Critical/Important findings with RED-GREEN tests.
 - [ ] Commit production hardening.
+
+Continuation note (2026-10-29): the baseline hardening and first review-fix pass
+are committed through `cd58c22`. A second RED→GREEN pass is active and
+uncommitted: real timing/serialized synchronization and the authenticated
+Supabase dashboard are focused-GREEN; import rule preservation and explicit
+review decisions are implemented; the exact current RED is the missing
+`buildPublishedPaperVersionsFromImport()` dual immutable publication builder.
+See `docs/PROJECT_HANDOFF.md` and the SDD progress ledger before resuming.

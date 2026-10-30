@@ -7,10 +7,11 @@ export const AnswerEventSchema = z
     id: z.string().trim().min(1),
     attemptId: z.string().uuid(),
     questionId: z.string().trim().min(1),
-    type: z.enum(["answer_selected", "answer_cleared"]),
+    type: z.enum(["answer_selected", "answer_cleared", "time_spent"]),
     selectedOptionId: z.string().trim().min(1).optional(),
     occurredAt: z.number().int().nonnegative(),
     clientSequence: z.number().int().positive(),
+    timeSpentMs: z.number().int().nonnegative().default(0),
   })
   .strict()
   .superRefine((event, context) => {
@@ -27,6 +28,14 @@ export const AnswerEventSchema = z
         code: "custom",
         path: ["selectedOptionId"],
         message: "Cleared-answer events cannot include an option.",
+      });
+    }
+
+    if (event.type === "time_spent" && event.selectedOptionId) {
+      context.addIssue({
+        code: "custom",
+        path: ["selectedOptionId"],
+        message: "Timing events cannot include an option.",
       });
     }
   });

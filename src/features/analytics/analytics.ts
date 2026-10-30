@@ -1,6 +1,7 @@
 import {
   AttemptResultSchema,
   AttemptSchema,
+  PaperVersionSchema,
   type Attempt,
   type AttemptResult,
   type PaperVersion,
@@ -10,6 +11,10 @@ import {
   buildAttemptAnalytics,
   supportedSubjects,
 } from "@/features/exam/scoring";
+import {
+  materializeAnswers,
+  type AnswerEvent,
+} from "@/features/exam/session";
 
 const minimumPercentileAttemptCount = 100;
 const anonymousDisplayName = "Anonymous aspirant";
@@ -167,6 +172,157 @@ export type LeaderboardSnapshot = {
   percentileStatus: "provisional" | "available";
   entries: LeaderboardEntry[];
 };
+
+type DashboardRowInput = {
+  userId: string;
+  profile?: { hide_display_name?: boolean } | null;
+  attemptRows: Array<Record<string, unknown>>;
+  resultRows: Array<Record<string, unknown>>;
+  paperRows: Array<Record<string, unknown>>;
+  eventRows: Array<Record<string, unknown>>;
+  leaderboardRows: Array<Record<string, unknown>>;
+};
+
+function answerEventFromDashboardRow(row: Record<string, unknown>): AnswerEvent {
+  return {
+    id: String(row.id),
+    attemptId: String(row.attempt_id),
+    questionId: String(row.question_id),
+    type: row.event_type as AnswerEvent["type"],
+    ...(row.selected_option_id
+      ? { selectedOptionId: String(row.selected_option_id) }
+      : {}),
+    occurredAt: Number(row.occurred_at_ms),
+    clientSequence: Number(row.client_sequence),
+    timeSpentMs: Number(row.time_spent_ms ?? 0),
+  };
+}
+
+export function buildDashboardDataFromRows(input: DashboardRowInput) {
+  const resultByAttemptId = new Map(
+    input.resultRows.map((row) => [String(row.attempt_id), row.result]),
+  );
+  const paperById = new Map(
+    input.paperRows.map((row) => [
+      String(row.id),
+      PaperVersionSchema.parse(row.content),
+    ]),
+  );
+  const eventsByAttemptId = new Map<string, AnswerEvent[]>();
+
+  for (const row of input.eventRows) {
+    const event = answerEventFromDashboardRow(row);
+    const events = eventsByAttemptId.get(event.attemptId) ?? [];
+    events.push(event);
+    eventsByAttemptId.set(event.attemptId, events);
+  }
+
+  const history = input.attemptRows
+    .flatMap((row) => {
+      const attemptId = String(row.id);
+      const paperVersionId = String(row.paper_version_id);
+      const paper = paperById.get(paperVersionId);
+      const resultInput = resultByAttemptId.get(attemptId);
+      if (!paper || !resultInput) return [];
+
+      const materialized = materializeAnswers(
+        eventsByAttemptId.get(attemptId) ?? [],
+      );
+      const attempt = AttemptSchema.parse({
+        id: attemptId,
+        userId: row.user_id,
+        paperVersionId,
+        mode: row.mode,
+        strict: row.strict,
+        attemptNumber: row.attempt_number,
+        visibility: row.visibility,
+        integrityStatus: row.integrity_status,
+        startedAt: row.started_at,
+        deadlineAt: row.deadline_at,
+        submittedAt: row.submitted_at,
+        answers: paper.questions.flatMap((question) => {
+          const answer = materialized[question.id];
+          return answer
+            ? [
+                {
+                  questionId: question.id,
+                  selectedOptionId: answer.selectedOptionId,
+                  answeredAt: new Date(answer.answeredAt).toISOString(),
+                  timeSpentMs: answer.timeSpentMs,
+                },
+              ]
+            : [];
+        }),
+      });
+
+      return [{ paper, attempt, result: AttemptResultSchema.parse(resultInput) }];
+    })
+    .sort((left, right) =>
+      (right.attempt.submittedAt ?? right.attempt.startedAt).localeCompare(
+        left.attempt.submittedAt ?? left.attempt.startedAt,
+      ),
+    );
+  const currentAttempt = history[0];
+
+  if (!currentAttempt) return undefined;
+
+  const currentEligibleAttempt = history.find(
+    ({ attempt }) =>
+      attempt.userId === input.userId &&
+      attempt.mode === "mock" &&
+      attempt.strict &&
+      attempt.attemptNumber === 1 &&
+      attempt.visibility === "public" &&
+      attempt.integrityStatus === "clear",
+  );
+  const entries = input.leaderboardRows.map((row) => {
+    const submittedAt = String(row.submitted_at);
+    const score = Number(row.score);
+    const correct = Number(row.correct);
+    const incorrect = Number(row.incorrect);
+    const currentUser = Boolean(
+      currentEligibleAttempt &&
+        currentEligibleAttempt.attempt.submittedAt === submittedAt &&
+        currentEligibleAttempt.result.score === score &&
+        currentEligibleAttempt.result.correct === correct &&
+        currentEligibleAttempt.result.incorrect === incorrect,
+    );
+    const percentile = row.percentile;
+
+    return {
+      rank: Number(row.rank),
+      displayName: String(row.display_name),
+      anonymous: row.display_name === "Anonymous aspirant",
+      currentUser,
+      score,
+      maxScore: Number(row.max_score),
+      correct,
+      incorrect,
+      totalTimeMs: Number(row.total_time_ms),
+      submittedAt,
+      ...(percentile === null || percentile === undefined
+        ? {}
+        : { percentile: Number(percentile) }),
+    };
+  });
+  const eligibleAttemptCount = entries.length;
+
+  return {
+    currentAttempt,
+    history,
+    eligibleAttemptCount,
+    initialHideName: Boolean(input.profile?.hide_display_name),
+    leaderboard: {
+      eligibleAttemptCount,
+      minimumAttemptCount: minimumPercentileAttemptCount,
+      percentileStatus:
+        eligibleAttemptCount >= minimumPercentileAttemptCount
+          ? ("available" as const)
+          : ("provisional" as const),
+      entries,
+    },
+  };
+}
 
 type RankedCandidate = {
   displayName: string;

@@ -26,6 +26,13 @@ export const MarkingSchemeSchema = z
 
 export const QuestionDispositionSchema = z.enum(["standard", "bonus", "dropped"]);
 
+export const AnswerKeyProvenanceSchema = z
+  .object({
+    source: z.enum(["provider", "official", "manual"]),
+    reference: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 export const QuestionSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -37,6 +44,7 @@ export const QuestionSchema = z
     acceptedOptionIds: z.array(z.string().trim().min(1)).default([]),
     solution: LocalizedTextSchema.optional(),
     disposition: QuestionDispositionSchema.default("standard"),
+    answerKeyProvenance: AnswerKeyProvenanceSchema.default({ source: "provider" }),
     marking: MarkingSchemeSchema,
   })
   .strict()
@@ -103,6 +111,7 @@ export const PaperVersionSchema = z
     id: z.string().trim().min(1),
     paperId: z.string().trim().min(1),
     revision: z.number().int().positive(),
+    pattern: z.enum(["original", "current"]).default("original"),
     status: z.enum(["draft", "review", "published", "archived"]),
     title: LocalizedTextSchema,
     durationMinutes: z.number().int().positive(),

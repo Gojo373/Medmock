@@ -12,6 +12,7 @@ import {
   buildPerformanceAnalytics,
   type LeaderboardCandidate,
 } from "@/features/analytics/analytics";
+import * as analyticsModule from "@/features/analytics/analytics";
 
 const localized = (en: string) => ({ en, hi: en + " हिंदी" });
 
@@ -314,5 +315,100 @@ describe("buildLeaderboard", () => {
       "Later finisher",
     ]);
     expect(leaderboard.entries.map((entry) => entry.rank)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("database-backed dashboard mapping", () => {
+  it("reconstructs timed history, persisted privacy, and the current leaderboard row", () => {
+    const version = paper();
+    const submittedAt = "2026-10-28T11:30:00.000Z";
+    const attempt = AttemptSchema.parse({
+      id: "attempt-dashboard",
+      userId: "student-dashboard",
+      paperVersionId: version.id,
+      mode: "mock",
+      strict: true,
+      attemptNumber: 1,
+      visibility: "public",
+      integrityStatus: "clear",
+      startedAt: "2026-10-28T10:00:00.000Z",
+      deadlineAt: "2026-10-28T13:00:00.000Z",
+      submittedAt,
+      answers: [
+        {
+          questionId: "p1",
+          selectedOptionId: "A",
+          answeredAt: "2026-10-28T10:01:00.000Z",
+          timeSpentMs: 42_000,
+        },
+      ],
+    });
+    const result = scoreAttempt(version, attempt);
+    const buildDashboardDataFromRows = (
+      analyticsModule as typeof analyticsModule & {
+        buildDashboardDataFromRows: (input: Record<string, unknown>) => {
+          currentAttempt: { attempt: Attempt };
+          history: Array<{ attempt: Attempt }>;
+          initialHideName: boolean;
+          eligibleAttemptCount: number;
+          leaderboard: { entries: Array<{ currentUser: boolean }> };
+        };
+      }
+    ).buildDashboardDataFromRows;
+
+    const dashboard = buildDashboardDataFromRows({
+      userId: "student-dashboard",
+      profile: { hide_display_name: true },
+      attemptRows: [
+        {
+          id: attempt.id,
+          user_id: attempt.userId,
+          paper_version_id: attempt.paperVersionId,
+          mode: attempt.mode,
+          strict: attempt.strict,
+          attempt_number: attempt.attemptNumber,
+          visibility: attempt.visibility,
+          integrity_status: attempt.integrityStatus,
+          started_at: attempt.startedAt,
+          deadline_at: attempt.deadlineAt,
+          submitted_at: attempt.submittedAt,
+        },
+      ],
+      resultRows: [{ attempt_id: attempt.id, result }],
+      paperRows: [{ id: version.id, content: version }],
+      eventRows: [
+        {
+          attempt_id: attempt.id,
+          id: "answer-1",
+          question_id: "p1",
+          event_type: "answer_selected",
+          selected_option_id: "A",
+          occurred_at_ms: Date.parse("2026-10-28T10:01:00.000Z"),
+          client_sequence: 1,
+          time_spent_ms: 42_000,
+        },
+      ],
+      leaderboardRows: [
+        {
+          rank: 1,
+          display_name: "Anonymous aspirant",
+          score: result.score,
+          max_score: result.maxScore,
+          correct: result.correct,
+          incorrect: result.incorrect,
+          total_time_ms: 42_000,
+          submitted_at: submittedAt,
+          percentile: null,
+        },
+      ],
+    });
+
+    expect(dashboard).toBeDefined();
+    if (!dashboard) throw new Error("Expected a populated dashboard.");
+    expect(dashboard.initialHideName).toBe(true);
+    expect(dashboard.history).toHaveLength(1);
+    expect(dashboard.currentAttempt.attempt.answers[0].timeSpentMs).toBe(42_000);
+    expect(dashboard.eligibleAttemptCount).toBe(1);
+    expect(dashboard.leaderboard.entries[0].currentUser).toBe(true);
   });
 });

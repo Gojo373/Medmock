@@ -1,6 +1,7 @@
 import type { ProviderSelection } from "@/features/imports/schema";
 
 export type ImportStatus =
+  | "uploading"
   | "uploaded"
   | "extracting"
   | "review_required"

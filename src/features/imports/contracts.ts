@@ -25,6 +25,7 @@ export const ImportStatusResponseSchema = z
   .object({
     importId: z.string().uuid(),
     status: z.enum([
+      "uploading",
       "uploaded",
       "extracting",
       "review_required",
@@ -39,7 +40,12 @@ export const ImportStatusResponseSchema = z
 export const ReviewFlagDecisionSchema = z
   .object({
     flagId: z.string().trim().min(1),
-    resolution: z.enum(["accept_primary", "accept_secondary", "manual_value"]),
+    resolution: z.enum([
+      "confirm",
+      "accept_primary",
+      "accept_secondary",
+      "manual_value",
+    ]),
     manualValue: z.unknown().optional(),
   })
   .strict()
@@ -53,12 +59,25 @@ export const ReviewFlagDecisionSchema = z
     }
   });
 
+export const ReviewImportRequestSchema = z
+  .object({
+    decisions: z.array(ReviewFlagDecisionSchema).min(1),
+  })
+  .strict();
+
 export const PublishImportRequestSchema = z
   .object({
     approved: z.literal(true),
     paperId: z.string().trim().min(1),
-    revision: z.number().int().positive(),
+    originalRevision: z.number().int().positive(),
+    currentRevision: z.number().int().positive(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.originalRevision !== value.currentRevision, {
+    path: ["currentRevision"],
+    message: "Original and current versions need distinct revisions.",
+  });
 
 export type CreateImportRequest = z.infer<typeof CreateImportRequestSchema>;
+export type ReviewImportRequest = z.infer<typeof ReviewImportRequestSchema>;
+export type PublishImportRequest = z.infer<typeof PublishImportRequestSchema>;

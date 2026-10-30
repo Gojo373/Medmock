@@ -90,4 +90,46 @@ describe("ExamWorkspace", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm submission" })).toBeInTheDocument();
   });
+
+  it("localizes exam controls, timer, palette, sync state, and submission dialog in Hindi", async () => {
+    const user = userEvent.setup();
+    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+
+    await user.click(screen.getByRole("button", { name: "Switch question language" }));
+
+    expect(screen.getByText("समय शेष")).toBeInTheDocument();
+    expect(screen.getByText("प्रश्न 1 / 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "टेस्ट जमा करें" })).toBeInTheDocument();
+    expect(screen.getByText("इस डिवाइस पर सहेजा गया")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "टेस्ट जमा करें" }));
+    expect(
+      screen.getByRole("heading", { name: "यह प्रयास जमा करें?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "जमा करने की पुष्टि करें" })).toBeInTheDocument();
+  });
+
+  it("traps dialog focus, makes the background inert, closes on Escape, and restores focus", async () => {
+    const user = userEvent.setup();
+    render(<ExamWorkspace mode="mock" paper={fixture()} />);
+
+    const submit = screen.getByRole("button", { name: "Submit test" });
+    await user.click(submit);
+
+    const background = screen.getByTestId("exam-background");
+    const confirm = screen.getByRole("button", { name: "Confirm submission" });
+    const cancel = screen.getByRole("button", { name: "Keep reviewing" });
+    expect(background).toHaveAttribute("inert");
+    expect(confirm).toHaveFocus();
+
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(confirm).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(background).not.toHaveAttribute("inert");
+    expect(submit).toHaveFocus();
+  });
 });

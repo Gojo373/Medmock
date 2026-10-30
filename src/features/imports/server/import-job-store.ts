@@ -17,6 +17,7 @@ if (process.env.NODE_ENV !== "production") {
 export async function createImportJob(
   providerSelection: ProviderSelection,
   ownerId: string,
+  initialStatus: ImportJob["status"] = "uploaded",
 ) {
   if (process.env.NODE_ENV !== "test") {
     const client = createSupabaseAdminClient();
@@ -25,7 +26,7 @@ export async function createImportJob(
       .insert({
         owner_id: ownerId,
         provider_selection: providerSelection,
-        status: "uploaded",
+        status: initialStatus,
         review_flag_count: 0,
       })
       .select("id, status, provider_selection, review_flag_count")
@@ -43,7 +44,7 @@ export async function createImportJob(
 
   const job: ImportJob = {
     id: crypto.randomUUID(),
-    status: "uploaded",
+    status: initialStatus,
     providerSelection,
     reviewFlagCount: 0,
   };

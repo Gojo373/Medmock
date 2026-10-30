@@ -47,14 +47,29 @@ describe("AdminImportWorkspace", () => {
       screen.getByLabelText("Paper file"),
       new File(["paper"], "neet.pdf", { type: "application/pdf" }),
     );
+    await user.upload(
+      screen.getByLabelText("Official answer key file"),
+      new File(["key"], "key.pdf", { type: "application/pdf" }),
+    );
+    await user.upload(
+      screen.getByLabelText("Solution booklet file"),
+      new File(["solutions"], "solutions.pdf", { type: "application/pdf" }),
+    );
     await user.click(screen.getByRole("button", { name: /start reviewed extraction/i }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/imports/upload",
       expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
+    const request = fetchMock.mock.calls[0][1] as { body: FormData };
+    expect((request.body.get("answerKey") as File).name).toBe("key.pdf");
+    expect((request.body.get("solution") as File).name).toBe("solutions.pdf");
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Import queued for extraction and review.",
+    );
+    expect(screen.getByRole("link", { name: "Open import review" })).toHaveAttribute(
+      "href",
+      "/admin/imports/import-1",
     );
   });
 });

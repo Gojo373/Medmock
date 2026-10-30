@@ -1,0 +1,150 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  publishReviewedImport,
+  reviewImport,
+  type ImportReviewRepository,
+} from "@/features/imports/server/import-review-service";
+import { reconcileExtractions } from "@/features/imports/reconciliation";
+import { ExtractionDocumentSchema } from "@/features/imports/schema";
+
+function draft() {
+  return reconcileExtractions([
+    ExtractionDocumentSchema.parse({
+      schemaVersion: 1,
+      provider: "openai",
+      source: {
+        fileId: "file-1",
+        fileName: "paper.pdf",
+        mimeType: "application/pdf",
+      },
+      paper: {
+        title: { en: "NEET 2025", hi: "नीट 2025" },
+        year: 2025,
+        durationMinutes: 180,
+        sections: [
+          {
+            id: "physics-a",
+            subject: "physics",
+            title: { en: "Physics", hi: "भौतिक विज्ञान" },
+            questionNumbers: ["1"],
+          },
+        ],
+        questions: [
+          {
+            sourceNumber: "1",
+            sectionId: "physics-a",
+            subject: "physics",
+            topic: "Mechanics",
+            stem: { en: "Question", hi: "प्रश्न" },
+            options: [
+              { id: "A", text: { en: "A", hi: "ए" } },
+              { id: "B", text: { en: "B", hi: "बी" } },
+            ],
+            acceptedOptionIds: ["A"],
+            solution: { en: "Solution", hi: "समाधान" },
+            confidence: {
+              stem: 1,
+              options: 1,
+              answerKey: 1,
+              translation: 1,
+              solution: 1,
+            },
+          },
+        ],
+      },
+    }),
+  ]);
+}
+
+function repository(document = draft()) {
+  const store = {
+    status: "review_required" as const,
+    reconciled: document,
+    reviewed: undefined,
+  };
+
+  return {
+    get: vi.fn().mockImplementation(async () => store),
+    saveReview: vi.fn().mockImplementation(async (_id, reviewed, ready) => {
+      store.reviewed = reviewed;
+      Object.assign(store, { status: ready ? "ready_to_publish" : "review_required" });
+    }),
+    publish: vi.fn().mockResolvedValue(undefined),
+  } satisfies ImportReviewRepository;
+}
+
+describe("import review and atomic publication", () => {
+  it("persists explicit decisions and only marks fully resolved content ready", async () => {
+    const store = repository();
+    const adminFlag = draft().reviewFlags.find((flag) => flag.code === "admin_review")!;
+
+    const reviewed = await reviewImport(store, "import-1", [
+      { flagId: adminFlag.id, resolution: "confirm" },
+    ]);
+
+    expect(reviewed.canPublish).toBe(true);
+    expect(store.saveReview).toHaveBeenCalledWith(
+      "import-1",
+      expect.objectContaining({
+        reviewFlags: expect.arrayContaining([
+          expect.objectContaining({ id: adminFlag.id, resolved: true }),
+        ]),
+      }),
+      true,
+    );
+  });
+
+  it("rejects publication until every flag is resolved and approval is explicit", async () => {
+    const store = repository();
+
+    await expect(
+      publishReviewedImport(store, "import-1", "admin-1", {
+        approved: true,
+        paperId: "neet-2025",
+        originalRevision: 1,
+        currentRevision: 2,
+      }),
+    ).rejects.toThrow("Import is not ready to publish.");
+    expect(store.publish).not.toHaveBeenCalled();
+  });
+
+  it("builds deterministic immutable versions and delegates one atomic publish", async () => {
+    const reviewed = draft();
+    reviewed.reviewFlags.forEach((flag) => {
+      flag.resolved = true;
+    });
+    const store = repository(reviewed);
+    store.get.mockResolvedValue({
+      status: "ready_to_publish",
+      reconciled: reviewed,
+      reviewed,
+    });
+
+    const result = await publishReviewedImport(store, "import-1", "admin-1", {
+      approved: true,
+      paperId: "neet-2025",
+      originalRevision: 1,
+      currentRevision: 2,
+    }, "2026-10-30T00:00:00.000Z");
+
+    expect(result).toEqual({
+      originalVersionId: "neet-2025-original-r1",
+      currentVersionId: "neet-2025-current-r2",
+    });
+    expect(store.publish).toHaveBeenCalledWith(
+      "import-1",
+      "admin-1",
+      expect.objectContaining({
+        original: expect.objectContaining({
+          id: "neet-2025-original-r1",
+          pattern: "original",
+        }),
+        current: expect.objectContaining({
+          id: "neet-2025-current-r2",
+          pattern: "current",
+        }),
+      }),
+    );
+  });
+});

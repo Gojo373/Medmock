@@ -20,6 +20,7 @@ import {
   UploadCloud,
   Users,
 } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState, type ChangeEvent } from "react";
 
 import { BrandMark } from "@/components/brand/brand-mark";
@@ -50,6 +51,7 @@ const copy = {
     safetyDetail:
       "Conflicts, missing translations, weak confidence and invalid answer keys are surfaced question by question.",
     next: "Start reviewed extraction",
+    openReview: "Open import review",
     language: "हिंदी",
   },
   hi: {
@@ -73,6 +75,7 @@ const copy = {
     safetyDetail:
       "मतभेद, अनुपलब्ध अनुवाद, कम विश्वास और अमान्य उत्तर हर प्रश्न पर दिखाए जाते हैं।",
     next: "समीक्षित एक्सट्रैक्शन शुरू करें",
+    openReview: "इम्पोर्ट समीक्षा खोलें",
     language: "English",
   },
 } as const;
@@ -111,8 +114,13 @@ export function AdminImportWorkspace() {
   const [provider, setProvider] = useState<ProviderSelection>("both");
   const [locale, setLocale] = useState<keyof typeof copy>("en");
   const [paperFile, setPaperFile] = useState<File>();
+  const [answerKeyFile, setAnswerKeyFile] = useState<File>();
+  const [solutionFile, setSolutionFile] = useState<File>();
+  const [importId, setImportId] = useState<string>();
   const [importStatus, setImportStatus] = useState<"error" | "idle" | "queued" | "uploading">("idle");
   const paperInput = useRef<HTMLInputElement>(null);
+  const answerKeyInput = useRef<HTMLInputElement>(null);
+  const solutionInput = useRef<HTMLInputElement>(null);
   const currentCopy = copy[locale];
 
   function onPaperSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -125,14 +133,23 @@ export function AdminImportWorkspace() {
     const body = new FormData();
     body.set("paper", paperFile);
     body.set("providerSelection", provider);
+    if (answerKeyFile) body.set("answerKey", answerKeyFile);
+    if (solutionFile) body.set("solution", solutionFile);
 
     try {
       const response = await fetch("/api/imports/upload", {
         method: "POST",
         body,
       });
-      setImportStatus(response.ok ? "queued" : "error");
+      if (!response.ok) throw new Error("Import upload failed");
+      const payload = await response.json();
+      if (typeof payload.importId !== "string" || !payload.importId) {
+        throw new Error("Import response was invalid");
+      }
+      setImportId(payload.importId);
+      setImportStatus("queued");
     } catch {
+      setImportId(undefined);
       setImportStatus("error");
     }
   }
@@ -172,18 +189,18 @@ export function AdminImportWorkspace() {
       <div className="admin-frame">
         <aside className="admin-sidebar">
           <nav aria-label="Admin navigation">
-            <a href="/admin"><LayoutDashboard aria-hidden="true" /> Overview</a>
-            <a className="is-active" href="/admin/imports">
+            <Link href="/admin"><LayoutDashboard aria-hidden="true" /> Overview</Link>
+            <Link className="is-active" href="/admin/imports">
               <UploadCloud aria-hidden="true" /> Paper imports
               <span>3</span>
-            </a>
-            <a href="/admin/papers"><LibraryBig aria-hidden="true" /> Paper library</a>
-            <a href="/admin/reviews"><ClipboardCheck aria-hidden="true" /> Review queue</a>
-            <a href="/admin/students"><Users aria-hidden="true" /> Students</a>
-            <a href="/admin/analytics"><BarChart3 aria-hidden="true" /> Analytics</a>
+            </Link>
+            <Link href="/admin/papers"><LibraryBig aria-hidden="true" /> Paper library</Link>
+            <Link href="/admin/reviews"><ClipboardCheck aria-hidden="true" /> Review queue</Link>
+            <Link href="/admin/students"><Users aria-hidden="true" /> Students</Link>
+            <Link href="/admin/analytics"><BarChart3 aria-hidden="true" /> Analytics</Link>
           </nav>
           <div className="admin-sidebar__bottom">
-            <a href="/admin/settings"><Settings2 aria-hidden="true" /> Settings</a>
+            <Link href="/admin/settings"><Settings2 aria-hidden="true" /> Settings</Link>
             <div className="capacity-card">
               <Sparkles aria-hidden="true" />
               <strong>500 concurrent</strong>
@@ -311,15 +328,37 @@ export function AdminImportWorkspace() {
                   </div>
                 </div>
                 <div className="source-file-grid">
-                  <button type="button">
+                  <input
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    aria-label="Official answer key file"
+                    hidden
+                    onChange={(event) => setAnswerKeyFile(event.target.files?.[0])}
+                    ref={answerKeyInput}
+                    type="file"
+                  />
+                  <button onClick={() => answerKeyInput.current?.click()} type="button">
                     <FileKey2 aria-hidden="true" />
-                    <span><strong>{currentCopy.answerKey}</strong><small>{currentCopy.answerKeyDetail}</small></span>
-                    <em>+ Add</em>
+                    <span>
+                      <strong>{answerKeyFile?.name ?? currentCopy.answerKey}</strong>
+                      <small>{currentCopy.answerKeyDetail}</small>
+                    </span>
+                    <em>{answerKeyFile ? "Change" : "+ Add"}</em>
                   </button>
-                  <button type="button">
+                  <input
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    aria-label="Solution booklet file"
+                    hidden
+                    onChange={(event) => setSolutionFile(event.target.files?.[0])}
+                    ref={solutionInput}
+                    type="file"
+                  />
+                  <button onClick={() => solutionInput.current?.click()} type="button">
                     <ListChecks aria-hidden="true" />
-                    <span><strong>{currentCopy.solutions}</strong><small>{currentCopy.solutionsDetail}</small></span>
-                    <em>+ Add</em>
+                    <span>
+                      <strong>{solutionFile?.name ?? currentCopy.solutions}</strong>
+                      <small>{currentCopy.solutionsDetail}</small>
+                    </span>
+                    <em>{solutionFile ? "Change" : "+ Add"}</em>
                   </button>
                 </div>
               </GlassPanel>
@@ -336,6 +375,9 @@ export function AdminImportWorkspace() {
                   {importStatus === "queued"
                     ? "Import queued for extraction and review."
                     : "The import could not be queued. Please retry."}
+                  {importStatus === "queued" && importId && (
+                    <Link href={`/admin/imports/${importId}`}>{currentCopy.openReview}</Link>
+                  )}
                 </p>
               )}
             </div>

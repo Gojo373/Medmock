@@ -104,6 +104,8 @@ describe("examSessionReducer", () => {
     state = examSessionReducer(state, {
       type: "NAVIGATE",
       questionId: "c1",
+      eventId: "time-p1",
+      occurredAt: 1_250,
     });
 
     expect(state.answers.p1).toMatchObject({ selectedOptionId: "B", locked: false });
@@ -121,6 +123,7 @@ describe("examSessionReducer", () => {
     expect(state.eventQueue.map((event) => event.type)).toEqual([
       "answer_selected",
       "answer_selected",
+      "time_spent",
       "answer_cleared",
     ]);
   });
@@ -196,15 +199,23 @@ describe("examSessionReducer", () => {
   });
 
   it("requires confirmation before a manual submission", () => {
-    let state = examSessionReducer(session(), { type: "REQUEST_SUBMIT" });
+    let state = examSessionReducer(session(), {
+      type: "REQUEST_SUBMIT",
+      eventId: "time-submit-1",
+      occurredAt: 1_500,
+    });
 
     expect(state.status).toBe("submit_pending");
     expect(state.submissionReason).toBeUndefined();
 
-    state = examSessionReducer(state, { type: "CANCEL_SUBMIT" });
+    state = examSessionReducer(state, { type: "CANCEL_SUBMIT", occurredAt: 1_600 });
     expect(state.status).toBe("active");
 
-    state = examSessionReducer(state, { type: "REQUEST_SUBMIT" });
+    state = examSessionReducer(state, {
+      type: "REQUEST_SUBMIT",
+      eventId: "time-submit-2",
+      occurredAt: 1_900,
+    });
     state = examSessionReducer(state, { type: "CONFIRM_SUBMIT", submittedAt: 2_000 });
 
     expect(state.status).toBe("submitted");
@@ -213,12 +224,59 @@ describe("examSessionReducer", () => {
   });
 
   it("auto-submits against the server-authoritative deadline", () => {
-    const state = examSessionReducer(session(), { type: "TICK", nowMs: 10_000 });
+    const state = examSessionReducer(session(), {
+      type: "TICK",
+      eventId: "time-expired",
+      nowMs: 10_000,
+    });
 
     expect(state.status).toBe("submitted");
     expect(state.submissionReason).toBe("expired");
     expect(state.submittedAt).toBe(10_000);
     expect(state.remainingMs).toBe(0);
+  });
+
+  it("records cumulative time across visits for the final answer", () => {
+    let state = session();
+
+    state = examSessionReducer(state, {
+      type: "SELECT_OPTION",
+      eventId: "answer-1",
+      questionId: "p1",
+      optionId: "A",
+      occurredAt: 2_500,
+    });
+    state = examSessionReducer(state, {
+      type: "NAVIGATE",
+      eventId: "time-p1-first-visit",
+      questionId: "c1",
+      occurredAt: 4_000,
+    });
+    state = examSessionReducer(state, {
+      type: "NAVIGATE",
+      eventId: "time-c1",
+      questionId: "p1",
+      occurredAt: 5_000,
+    });
+    state = examSessionReducer(state, {
+      type: "SELECT_OPTION",
+      eventId: "answer-2",
+      questionId: "p1",
+      optionId: "B",
+      occurredAt: 7_000,
+    });
+
+    expect(state.eventQueue.map((event) => [event.type, event.timeSpentMs])).toEqual([
+      ["answer_selected", 1_500],
+      ["time_spent", 3_000],
+      ["time_spent", 1_000],
+      ["answer_selected", 5_000],
+    ]);
+    expect(materializeAnswers(state.eventQueue).p1).toEqual({
+      selectedOptionId: "B",
+      answeredAt: 7_000,
+      timeSpentMs: 5_000,
+    });
   });
 });
 
@@ -233,6 +291,7 @@ describe("offline event reconciliation", () => {
         selectedOptionId: "A",
         occurredAt: 1_100,
         clientSequence: 1,
+        timeSpentMs: 100,
       },
       {
         id: "event-3",
@@ -242,6 +301,7 @@ describe("offline event reconciliation", () => {
         selectedOptionId: "B",
         occurredAt: 1_300,
         clientSequence: 3,
+        timeSpentMs: 300,
       },
     ];
     const remote: AnswerEvent[] = [
@@ -253,6 +313,7 @@ describe("offline event reconciliation", () => {
         type: "answer_cleared",
         occurredAt: 1_200,
         clientSequence: 2,
+        timeSpentMs: 200,
       },
       {
         id: "event-4",
@@ -262,6 +323,7 @@ describe("offline event reconciliation", () => {
         selectedOptionId: "C",
         occurredAt: 1_400,
         clientSequence: 4,
+        timeSpentMs: 400,
       },
     ];
 
@@ -274,8 +336,8 @@ describe("offline event reconciliation", () => {
       "event-4",
     ]);
     expect(materializeAnswers(merged)).toEqual({
-      p1: { selectedOptionId: "B", answeredAt: 1_300 },
-      c1: { selectedOptionId: "C", answeredAt: 1_400 },
+      p1: { selectedOptionId: "B", answeredAt: 1_300, timeSpentMs: 300 },
+      c1: { selectedOptionId: "C", answeredAt: 1_400, timeSpentMs: 400 },
     });
   });
 });

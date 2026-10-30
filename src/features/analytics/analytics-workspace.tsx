@@ -60,6 +60,7 @@ const copy = {
     leaderboardNote: "Only submitted first strict mocks with clear integrity are ranked.",
     privacy: "Hide my name on public rankings",
     privateNote: "Your scores stay in your private history even when public identity is hidden.",
+    privacyError: "Privacy could not be updated. Your previous setting was restored.",
     rank: "Rank",
     aspirant: "Aspirant",
     marks: "Marks",
@@ -91,6 +92,7 @@ const copy = {
     leaderboardNote: "केवल स्पष्ट सत्यनिष्ठा वाले पहले सख्त मॉक को रैंक किया जाता है।",
     privacy: "सार्वजनिक रैंकिंग में मेरा नाम छिपाएं",
     privateNote: "सार्वजनिक पहचान छिपाने पर भी स्कोर निजी इतिहास में सुरक्षित रहता है।",
+    privacyError: "गोपनीयता अपडेट नहीं हो सकी। आपकी पिछली सेटिंग बहाल कर दी गई है।",
     rank: "रैंक",
     aspirant: "अभ्यर्थी",
     marks: "अंक",
@@ -119,6 +121,116 @@ function formatPercent(value: number) {
   return `${Math.round(value)}%`;
 }
 
+export function AnalyticsEmptyState() {
+  const [locale, setLocale] = useState<Locale>("en");
+  const text =
+    locale === "en"
+      ? {
+          title: "Your results will appear here",
+          description:
+            "Complete a reviewed mock or practice paper to unlock history, solutions, timing analytics, and eligible rankings.",
+          action: "Browse paper library",
+        }
+      : {
+          title: "आपके परिणाम यहाँ दिखाई देंगे",
+          description:
+            "इतिहास, समाधान, समय विश्लेषण और योग्य रैंकिंग देखने के लिए समीक्षित मॉक या अभ्यास पेपर पूरा करें।",
+          action: "पेपर लाइब्रेरी देखें",
+        };
+
+  return (
+    <main className="analytics-shell">
+      <header className="analytics-topbar">
+        <Link aria-label="MedMock home" href="/">
+          <BrandMark compact />
+        </Link>
+        <div />
+        <div>
+          <Button
+            aria-label="Switch analytics language"
+            onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+            tone="ghost"
+          >
+            <Languages aria-hidden="true" size={17} />
+            {locale === "en" ? "हिंदी" : "English"}
+          </Button>
+          <ThemeToggle />
+        </div>
+      </header>
+      <div className="analytics-page">
+        <section className="analytics-panel analytics-empty-state">
+          <BookOpenCheck aria-hidden="true" />
+          <h1>{text.title}</h1>
+          <p>{text.description}</p>
+          <Link className="button button--primary" href="/">
+            {text.action}
+          </Link>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+export function AnalyticsLoadingState() {
+  return (
+    <main className="analytics-shell">
+      <div className="analytics-page">
+        <section
+          aria-live="polite"
+          className="analytics-panel analytics-empty-state"
+          role="status"
+        >
+          <TrendingUp aria-hidden="true" />
+          <h1>Loading your dashboard…</h1>
+          <p>आपका डैशबोर्ड और सुरक्षित प्रयास इतिहास लोड हो रहा है।</p>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+export function AnalyticsErrorState({ retry }: { retry: () => void }) {
+  const [locale, setLocale] = useState<Locale>("en");
+  const text = locale === "en"
+    ? {
+        title: "Your dashboard could not be loaded.",
+        description: "Your attempt data remains safe. Retry the database request.",
+        retry: "Try again",
+      }
+    : {
+        title: "आपका डैशबोर्ड लोड नहीं हो सका।",
+        description: "आपका प्रयास डेटा सुरक्षित है। डेटाबेस अनुरोध फिर चलाएँ।",
+        retry: "फिर प्रयास करें",
+      };
+
+  return (
+    <main className="analytics-shell">
+      <header className="analytics-topbar">
+        <Link aria-label="MedMock home" href="/">
+          <BrandMark compact />
+        </Link>
+        <div />
+        <Button
+          aria-label="Switch analytics language"
+          onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+          tone="ghost"
+        >
+          <Languages aria-hidden="true" size={17} />
+          {locale === "en" ? "हिंदी" : "English"}
+        </Button>
+      </header>
+      <div className="analytics-page">
+        <section className="analytics-panel analytics-empty-state" role="alert">
+          <XCircle aria-hidden="true" />
+          <h1>{text.title}</h1>
+          <p>{text.description}</p>
+          <Button onClick={retry}>{text.retry}</Button>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 export function AnalyticsShell({
   currentAttempt,
   eligibleAttemptCount,
@@ -134,6 +246,7 @@ export function AnalyticsShell({
 }) {
   const [locale, setLocale] = useState<Locale>("en");
   const [hideName, setHideName] = useState(initialHideName);
+  const [privacyState, setPrivacyState] = useState<"error" | "idle" | "saving">("idle");
   const text = copy[locale];
   const analytics = useMemo(
     () =>
@@ -352,20 +465,31 @@ export function AnalyticsShell({
               <input
                 aria-label={text.privacy}
                 checked={hideName}
-                onChange={(event) => {
+                disabled={privacyState === "saving"}
+                onChange={async (event) => {
+                  const previousValue = hideName;
                   const nextValue = event.target.checked;
                   setHideName(nextValue);
-                  fetch("/api/profile/privacy", {
-                    method: "PATCH",
-                    credentials: "same-origin",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ hideDisplayName: nextValue }),
-                  }).catch(() => undefined);
+                  setPrivacyState("saving");
+                  try {
+                    const response = await fetch("/api/profile/privacy", {
+                      method: "PATCH",
+                      credentials: "same-origin",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ hideDisplayName: nextValue }),
+                    });
+                    if (!response.ok) throw new Error("Privacy update failed");
+                    setPrivacyState("idle");
+                  } catch {
+                    setHideName(previousValue);
+                    setPrivacyState("error");
+                  }
                 }}
                 type="checkbox"
               />
               <span><LockKeyhole aria-hidden="true" /> {text.privacy}</span>
               <small>{text.privateNote}</small>
+              {privacyState === "error" && <small role="alert">{text.privacyError}</small>}
             </label>
           </div>
           <div className="leaderboard-table-wrap">

@@ -22,6 +22,7 @@ const confidenceFields = [
 
 type ReconciliationOptions = {
   officialAnswerKey?: Record<string, string[]>;
+  officialAnswerKeyFileId?: string;
 };
 
 type PublishIssue = {
@@ -230,6 +231,12 @@ export function reconcileExtractions(
 
     if (officialAnswer && paperQuestion) {
       paperQuestion.acceptedOptionIds = officialAnswer;
+      paperQuestion.answerKeyProvenance = {
+        source: "official",
+        ...(options.officialAnswerKeyFileId
+          ? { reference: options.officialAnswerKeyFileId }
+          : {}),
+      };
     } else {
       compareQuestionField(
         documents,
@@ -284,6 +291,79 @@ export function validateImportForPublish(draft: ReconciledImport): {
   };
 }
 
+export type ReviewDecision = {
+  flagId: string;
+  resolution: "confirm" | "accept_primary" | "accept_secondary" | "manual_value";
+  manualValue?: unknown;
+};
+
+function setReviewedValue(
+  draft: ReconciledImport,
+  path: string,
+  value: unknown,
+) {
+  const segments = path.split(".");
+  let target: Record<string, unknown>;
+
+  if (segments[0] === "paper") {
+    segments.shift();
+    target = draft.paper as unknown as Record<string, unknown>;
+  } else if (segments[0] === "questions") {
+    segments.shift();
+    const sourceNumber = segments.shift();
+    const question = draft.paper.questions.find(
+      (item) => item.sourceNumber === sourceNumber,
+    );
+    if (!question) throw new Error("Review question path was not found.");
+    target = question as unknown as Record<string, unknown>;
+  } else {
+    throw new Error("Unsupported review path.");
+  }
+
+  const finalSegment = segments.pop();
+  if (!finalSegment) throw new Error("Review path must identify a field.");
+
+  for (const segment of segments) {
+    const next = target[segment];
+    if (!next || typeof next !== "object" || Array.isArray(next)) {
+      target[segment] = {};
+    }
+    target = target[segment] as Record<string, unknown>;
+  }
+
+  target[finalSegment] = value;
+}
+
+export function applyReviewDecisions(
+  draftInput: ReconciledImport,
+  decisions: ReviewDecision[],
+) {
+  const draft = structuredClone(draftInput);
+
+  for (const decision of decisions) {
+    const flag = draft.reviewFlags.find((item) => item.id === decision.flagId);
+    if (!flag) throw new Error("Review flag was not found.");
+    if (flag.resolved) continue;
+
+    if (decision.resolution !== "confirm") {
+      let value = decision.manualValue;
+      if (decision.resolution === "accept_primary") {
+        value = flag.providerValues?.[draft.providers[0]];
+      } else if (decision.resolution === "accept_secondary") {
+        value = flag.providerValues?.[draft.providers[1]];
+      }
+      if (value === undefined) {
+        throw new Error("The selected review resolution has no value.");
+      }
+      setReviewedValue(draft, flag.path, value);
+    }
+
+    flag.resolved = true;
+  }
+
+  return ReconciledImportSchema.parse(draft);
+}
+
 const sectionTitles = {
   physics: { en: "Physics", hi: "भौतिक विज्ञान" },
   chemistry: { en: "Chemistry", hi: "रसायन विज्ञान" },
@@ -308,6 +388,7 @@ export function buildPaperVersionFromImport(
     paperId: string;
     revision: number;
     publishedAt: string;
+    pattern?: "original" | "current";
   },
 ): PaperVersion {
   const validation = validateImportForPublish(draft);
@@ -337,33 +418,47 @@ export function buildPaperVersionFromImport(
       en: question.solution!.en!,
       hi: question.solution!.hi!,
     },
-    disposition: "standard" as const,
-    marking: {
-      correct: 4,
-      incorrect: -1,
-      unattempted: 0,
-    },
+    answerKeyProvenance: question.answerKeyProvenance,
+    disposition: question.disposition,
+    marking: question.marking,
   }));
-  const sectionIds = Array.from(new Set(questions.map((question) => question.sectionId)));
-  const sections = sectionIds.map((sectionId) => {
-    const sectionQuestions = questions.filter(
-      (question) => question.sectionId === sectionId,
-    );
-    const subject = sectionQuestions[0].subject;
+  const sections = draft.paper.sections.length > 0
+    ? draft.paper.sections.map((section) => ({
+        id: section.id,
+        subject: section.subject,
+        title: {
+          en: section.title.en!,
+          hi: section.title.hi!,
+        },
+        questionIds: section.questionNumbers.map(
+          (sourceNumber) => metadata.id + ":q:" + sourceNumber,
+        ),
+        ...(section.selectionLimit
+          ? { selectionLimit: section.selectionLimit }
+          : {}),
+      }))
+    : Array.from(new Set(questions.map((question) => question.sectionId))).map(
+        (sectionId) => {
+          const sectionQuestions = questions.filter(
+            (question) => question.sectionId === sectionId,
+          );
+          const subject = sectionQuestions[0].subject;
 
-    return {
-      id: sectionId,
-      subject,
-      title: sectionTitles[subject],
-      questionIds: sectionQuestions.map((question) => question.id),
-    };
-  });
+          return {
+            id: sectionId,
+            subject,
+            title: sectionTitles[subject],
+            questionIds: sectionQuestions.map((question) => question.id),
+          };
+        },
+      );
 
   return deepFreeze(PaperVersionSchema.parse({
     schemaVersion: 1,
     id: metadata.id,
     paperId: metadata.paperId,
     revision: metadata.revision,
+    pattern: metadata.pattern ?? "original",
     status: "published",
     title: {
       en: draft.paper.title!.en!,
@@ -374,4 +469,33 @@ export function buildPaperVersionFromImport(
     sections,
     questions,
   }));
+}
+
+export function buildPublishedPaperVersionsFromImport(
+  draft: ReconciledImport,
+  metadata: {
+    paperId: string;
+    originalId: string;
+    originalRevision: number;
+    currentId: string;
+    currentRevision: number;
+    publishedAt: string;
+  },
+): { original: PaperVersion; current: PaperVersion } {
+  return {
+    original: buildPaperVersionFromImport(draft, {
+      id: metadata.originalId,
+      paperId: metadata.paperId,
+      revision: metadata.originalRevision,
+      pattern: "original",
+      publishedAt: metadata.publishedAt,
+    }),
+    current: buildPaperVersionFromImport(draft, {
+      id: metadata.currentId,
+      paperId: metadata.paperId,
+      revision: metadata.currentRevision,
+      pattern: "current",
+      publishedAt: metadata.publishedAt,
+    }),
+  };
 }

@@ -83,14 +83,203 @@ create table public.import_jobs (
   owner_id uuid not null references public.profiles(id),
   provider_selection text not null check (provider_selection in ('openai', 'gemini', 'both')),
   status text not null check (
-    status in ('uploaded', 'extracting', 'review_required', 'ready_to_publish', 'published', 'failed')
+    status in ('uploading', 'uploaded', 'extracting', 'review_required', 'ready_to_publish', 'published', 'failed')
   ),
   review_flag_count integer not null default 0 check (review_flag_count >= 0),
   extraction_document jsonb,
+  reconciled_document jsonb,
+  reviewed_document jsonb,
   error_code text,
+  error_detail text,
+  processing_attempts integer not null default 0 check (processing_attempts >= 0),
+  lease_owner text,
+  lease_expires_at timestamptz,
+  next_retry_at timestamptz,
+  published_original_version_id text references public.paper_versions(id) on delete restrict,
+  published_current_version_id text references public.paper_versions(id) on delete restrict,
+  approved_by uuid references public.profiles(id),
+  approved_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  check ((lease_owner is null) = (lease_expires_at is null)),
+  check ((approved_by is null) = (approved_at is null))
 );
+
+create index import_jobs_worker_idx
+on public.import_jobs (status, next_retry_at, lease_expires_at, created_at);
+
+create or replace function public.claim_import_job(
+  p_worker_id text,
+  p_lease_seconds integer default 300
+)
+returns setof public.import_jobs
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  claimed_id uuid;
+begin
+  if coalesce(trim(p_worker_id), '') = '' or p_lease_seconds < 30 or p_lease_seconds > 900 then
+    raise exception 'Invalid import worker lease.' using errcode = '22023';
+  end if;
+
+  select id into claimed_id
+  from public.import_jobs
+  where processing_attempts < 5
+    and (
+      status = 'uploaded'
+      or (status = 'failed' and coalesce(next_retry_at, now()) <= now())
+      or (status = 'extracting' and lease_expires_at < now())
+    )
+  order by created_at
+  for update skip locked
+  limit 1;
+
+  if claimed_id is null then
+    return;
+  end if;
+
+  return query
+  update public.import_jobs
+  set status = 'extracting',
+      processing_attempts = processing_attempts + 1,
+      lease_owner = p_worker_id,
+      lease_expires_at = now() + make_interval(secs => p_lease_seconds),
+      error_code = null,
+      error_detail = null,
+      updated_at = now()
+  where id = claimed_id
+  returning *;
+end;
+$$;
+
+create or replace function public.publish_import_versions(
+  p_import_id uuid,
+  p_admin_id uuid,
+  p_paper_id text,
+  p_original_version jsonb,
+  p_current_version jsonb
+)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  import_row public.import_jobs%rowtype;
+  paper_owner uuid;
+  original_id text := p_original_version ->> 'id';
+  current_id text := p_current_version ->> 'id';
+  original_revision integer := (p_original_version ->> 'revision')::integer;
+  current_revision integer := (p_current_version ->> 'revision')::integer;
+  existing_content jsonb;
+begin
+  if not exists (
+    select 1 from public.profiles where id = p_admin_id and role = 'admin'
+  ) then
+    raise exception 'Admin approval is required.' using errcode = '42501';
+  end if;
+
+  select * into import_row
+  from public.import_jobs
+  where id = p_import_id and owner_id = p_admin_id
+  for update;
+
+  if not found then
+    raise exception 'Import was not found.' using errcode = 'P0002';
+  end if;
+
+  if import_row.status = 'published' then
+    if import_row.published_original_version_id = original_id
+      and import_row.published_current_version_id = current_id then
+      return jsonb_build_object(
+        'originalVersionId', original_id,
+        'currentVersionId', current_id
+      );
+    end if;
+    raise exception 'Import was already published with different versions.' using errcode = '55000';
+  end if;
+
+  if import_row.status <> 'ready_to_publish'
+    or import_row.reviewed_document is null
+    or jsonb_path_exists(
+      import_row.reviewed_document,
+      '$.reviewFlags[*] ? (@.resolved == false)'
+    ) then
+    raise exception 'Import is not ready to publish.' using errcode = '55000';
+  end if;
+
+  if coalesce(trim(p_paper_id), '') = ''
+    or original_id is null
+    or current_id is null
+    or original_id = current_id
+    or original_revision = current_revision
+    or p_original_version ->> 'paperId' <> p_paper_id
+    or p_current_version ->> 'paperId' <> p_paper_id
+    or p_original_version ->> 'pattern' <> 'original'
+    or p_current_version ->> 'pattern' <> 'current'
+    or p_original_version ->> 'status' <> 'published'
+    or p_current_version ->> 'status' <> 'published' then
+    raise exception 'Published version metadata is invalid.' using errcode = '22023';
+  end if;
+
+  insert into public.papers (id, owner_id, title)
+  values (p_paper_id, p_admin_id, p_original_version -> 'title')
+  on conflict (id) do nothing;
+
+  select owner_id into paper_owner from public.papers where id = p_paper_id;
+  if paper_owner <> p_admin_id then
+    raise exception 'Paper belongs to another administrator.' using errcode = '42501';
+  end if;
+
+  insert into public.paper_versions (
+    id, paper_id, revision, status, content, published_at, created_by
+  ) values (
+    original_id,
+    p_paper_id,
+    original_revision,
+    'published',
+    p_original_version,
+    (p_original_version ->> 'publishedAt')::timestamptz,
+    p_admin_id
+  ) on conflict (id) do nothing;
+
+  select content into existing_content from public.paper_versions where id = original_id;
+  if existing_content is distinct from p_original_version then
+    raise exception 'Original version identifier already has different content.' using errcode = '23505';
+  end if;
+
+  insert into public.paper_versions (
+    id, paper_id, revision, status, content, published_at, created_by
+  ) values (
+    current_id,
+    p_paper_id,
+    current_revision,
+    'published',
+    p_current_version,
+    (p_current_version ->> 'publishedAt')::timestamptz,
+    p_admin_id
+  ) on conflict (id) do nothing;
+
+  select content into existing_content from public.paper_versions where id = current_id;
+  if existing_content is distinct from p_current_version then
+    raise exception 'Current version identifier already has different content.' using errcode = '23505';
+  end if;
+
+  update public.import_jobs
+  set status = 'published',
+      published_original_version_id = original_id,
+      published_current_version_id = current_id,
+      approved_by = p_admin_id,
+      approved_at = now(),
+      updated_at = now()
+  where id = p_import_id;
+
+  return jsonb_build_object(
+    'originalVersionId', original_id,
+    'currentVersionId', current_id
+  );
+end;
+$$;
 
 create table public.import_files (
   id uuid primary key default gen_random_uuid(),
@@ -137,15 +326,16 @@ create table public.answer_events (
   attempt_id uuid not null references public.attempts(id) on delete cascade,
   id text not null,
   question_id text not null,
-  event_type text not null check (event_type in ('answer_selected', 'answer_cleared')),
+  event_type text not null check (event_type in ('answer_selected', 'answer_cleared', 'time_spent')),
   selected_option_id text,
   occurred_at_ms bigint not null check (occurred_at_ms >= 0),
   client_sequence integer not null check (client_sequence > 0),
+  time_spent_ms bigint not null default 0 check (time_spent_ms >= 0),
   received_at timestamptz not null default now(),
   primary key (attempt_id, id),
   check (
     (event_type = 'answer_selected' and selected_option_id is not null)
-    or (event_type = 'answer_cleared' and selected_option_id is null)
+    or (event_type in ('answer_cleared', 'time_spent') and selected_option_id is null)
   )
 );
 
@@ -256,12 +446,15 @@ begin
         or existing.event_type <> event_value ->> 'type'
         or coalesce(existing.selected_option_id, '') <> coalesce(event_value ->> 'selectedOptionId', '')
         or existing.occurred_at_ms <> (event_value ->> 'occurredAt')::bigint
-        or existing.client_sequence <> (event_value ->> 'clientSequence')::integer then
+        or existing.client_sequence <> (event_value ->> 'clientSequence')::integer
+        or existing.time_spent_ms <> coalesce((event_value ->> 'timeSpentMs')::bigint, 0) then
         return jsonb_build_object('error', 'answer_event_conflict', 'eventId', event_value ->> 'id');
       end if;
       duplicate_ids := duplicate_ids || jsonb_build_array(event_value ->> 'id');
     else
-      if attempt_row.mode = 'practice' and exists (
+      if attempt_row.mode = 'practice'
+        and event_value ->> 'type' = 'answer_selected'
+        and exists (
         select 1 from public.answer_events
         where attempt_id = p_attempt_id
           and question_id = event_value ->> 'questionId'
@@ -272,7 +465,7 @@ begin
 
       insert into public.answer_events (
         attempt_id, id, question_id, event_type, selected_option_id,
-        occurred_at_ms, client_sequence
+        occurred_at_ms, client_sequence, time_spent_ms
       ) values (
         p_attempt_id,
         event_value ->> 'id',
@@ -280,7 +473,8 @@ begin
         event_value ->> 'type',
         event_value ->> 'selectedOptionId',
         (event_value ->> 'occurredAt')::bigint,
-        (event_value ->> 'clientSequence')::integer
+        (event_value ->> 'clientSequence')::integer,
+        coalesce((event_value ->> 'timeSpentMs')::bigint, 0)
       );
       accepted_ids := accepted_ids || jsonb_build_array(event_value ->> 'id');
     end if;
@@ -351,8 +545,12 @@ $$;
 
 revoke all on function public.append_attempt_events(uuid, uuid, jsonb) from public;
 revoke all on function public.finalize_attempt(uuid, uuid, integer, timestamptz, text, jsonb, jsonb, integer, integer, integer, integer) from public;
+revoke all on function public.claim_import_job(text, integer) from public;
+revoke all on function public.publish_import_versions(uuid, uuid, text, jsonb, jsonb) from public;
 grant execute on function public.append_attempt_events(uuid, uuid, jsonb) to service_role;
 grant execute on function public.finalize_attempt(uuid, uuid, integer, timestamptz, text, jsonb, jsonb, integer, integer, integer, integer) to service_role;
+grant execute on function public.claim_import_job(text, integer) to service_role;
+grant execute on function public.publish_import_versions(uuid, uuid, text, jsonb, jsonb) to service_role;
 
 create or replace function public.get_leaderboard(p_paper_version_id text)
 returns table (
@@ -419,6 +617,7 @@ $$;
 
 revoke all on function public.get_leaderboard(text) from public;
 grant execute on function public.get_leaderboard(text) to authenticated;
+grant execute on function public.get_leaderboard(text) to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

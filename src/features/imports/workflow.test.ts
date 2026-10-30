@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { PaperVersion } from "@/features/exam/domain";
 import {
   ExtractionDocumentSchema,
   type ExtractionDocument,
@@ -15,6 +16,7 @@ import {
   reconcileExtractions,
   validateImportForPublish,
 } from "@/features/imports/reconciliation";
+import * as reconciliationModule from "@/features/imports/reconciliation";
 import { transitionImport } from "@/features/imports/state-machine";
 
 function localized(en: string, hi = en + " हिंदी") {
@@ -28,6 +30,7 @@ function payload(overrides: Record<string, unknown> = {}): ExtractionPayload {
       title: localized("NEET 2025"),
       year: 2025,
       durationMinutes: 180,
+      sections: [],
       questions: [
         {
           sourceNumber: "1",
@@ -41,6 +44,9 @@ function payload(overrides: Record<string, unknown> = {}): ExtractionPayload {
           ],
           acceptedOptionIds: ["A"],
           solution: localized("Use Newton's second law."),
+          disposition: "standard",
+          marking: { correct: 4, incorrect: -1, unattempted: 0 },
+          answerKeyProvenance: { source: "provider" },
           confidence: {
             stem: 0.96,
             options: 0.94,
@@ -334,6 +340,31 @@ describe("review and publish policy", () => {
     });
   });
 
+  it("applies an explicit provider choice to the reviewed field before resolving its flag", () => {
+    const openai = document("openai");
+    const geminiPayload = payload();
+    geminiPayload.paper.questions[0].stem!.en = "Define force.";
+    const draft = reconcileExtractions([openai, document("gemini", geminiPayload)]);
+    const conflict = draft.reviewFlags.find(
+      (flag) => flag.path === "questions.1.stem.en",
+    )!;
+
+    const applyReviewDecisions = (
+      reconciliationModule as typeof reconciliationModule & {
+        applyReviewDecisions: (
+          draft: ReturnType<typeof reconcileExtractions>,
+          decisions: Array<{ flagId: string; resolution: string }>,
+        ) => ReturnType<typeof reconcileExtractions>;
+      }
+    ).applyReviewDecisions;
+    const reviewed = applyReviewDecisions(draft, [
+      { flagId: conflict.id, resolution: "accept_secondary" },
+    ]);
+
+    expect(reviewed.paper.questions[0].stem?.en).toBe("Define force.");
+    expect(reviewed.reviewFlags.find((flag) => flag.id === conflict.id)?.resolved).toBe(true);
+  });
+
   it("maps an approved extraction into the shared published paper schema", () => {
     const draft = reconcileExtractions([document("openai")]);
     const reviewedDraft = {
@@ -373,6 +404,90 @@ describe("review and publish policy", () => {
     expect(() => {
       version.questions[0].topic = "Mutated after publication";
     }).toThrow();
+  });
+
+  it("preserves optional limits, correction dispositions, marking overrides, and official-key provenance", () => {
+    const ruledPayload = payload();
+    ruledPayload.paper.sections = [
+      {
+        id: "physics",
+        subject: "physics",
+        title: localized("Physics"),
+        questionNumbers: ["1"],
+        selectionLimit: 1,
+      },
+    ];
+    ruledPayload.paper.questions[0].disposition = "bonus";
+    ruledPayload.paper.questions[0].marking = {
+      correct: 5,
+      incorrect: -2,
+      unattempted: 0,
+    };
+    const draft = reconcileExtractions([document("openai", ruledPayload)], {
+      officialAnswerKey: { "1": ["B"] },
+      officialAnswerKeyFileId: "official-key-file",
+    });
+    const reviewedDraft = {
+      ...draft,
+      reviewFlags: draft.reviewFlags.map((flag) => ({ ...flag, resolved: true })),
+    };
+
+    const version = buildPaperVersionFromImport(reviewedDraft, {
+      id: "version-rules-1",
+      paperId: "neet-rules",
+      revision: 1,
+      publishedAt: "2026-10-28T10:00:00.000Z",
+    });
+
+    expect(version.sections[0].selectionLimit).toBe(1);
+    expect(version.questions[0]).toMatchObject({
+      acceptedOptionIds: ["B"],
+      disposition: "bonus",
+      marking: { correct: 5, incorrect: -2, unattempted: 0 },
+      answerKeyProvenance: {
+        source: "official",
+        reference: "official-key-file",
+      },
+    });
+  });
+
+  it("creates distinct immutable original-pattern and current-pattern versions", () => {
+    const draft = reconcileExtractions([document("openai")]);
+    const reviewedDraft = {
+      ...draft,
+      reviewFlags: draft.reviewFlags.map((flag) => ({ ...flag, resolved: true })),
+    };
+    const buildPublishedPaperVersionsFromImport = (
+      reconciliationModule as typeof reconciliationModule & {
+        buildPublishedPaperVersionsFromImport: (
+          draft: ReturnType<typeof reconcileExtractions>,
+          metadata: Record<string, unknown>,
+        ) => { original: PaperVersion; current: PaperVersion };
+      }
+    ).buildPublishedPaperVersionsFromImport;
+
+    const versions = buildPublishedPaperVersionsFromImport(reviewedDraft, {
+      paperId: "neet-2025",
+      originalId: "neet-2025-original-r1",
+      originalRevision: 1,
+      currentId: "neet-2025-current-r2",
+      currentRevision: 2,
+      publishedAt: "2026-10-28T10:00:00.000Z",
+    });
+
+    expect(versions.original).toMatchObject({
+      id: "neet-2025-original-r1",
+      revision: 1,
+      pattern: "original",
+    });
+    expect(versions.current).toMatchObject({
+      id: "neet-2025-current-r2",
+      revision: 2,
+      pattern: "current",
+    });
+    expect(versions.current).not.toBe(versions.original);
+    expect(Object.isFrozen(versions.original)).toBe(true);
+    expect(Object.isFrozen(versions.current)).toBe(true);
   });
 
   it("requires an explicit review completion event before publication", () => {

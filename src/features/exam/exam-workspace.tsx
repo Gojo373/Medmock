@@ -22,10 +22,18 @@ import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import type { PaperVersion } from "@/features/exam/domain";
-import { IndexedDbAttemptPersistence } from "@/features/exam/persistence";
+import {
+  createAttemptEventSyncController,
+  IndexedDbAttemptPersistence,
+} from "@/features/exam/persistence";
+import {
+  createOnlineAttemptRecovery,
+  rebindExamSessionAttempt,
+} from "@/features/exam/recovery";
 import {
   createExamSession,
   examSessionReducer,
+  mergeAnswerEvents,
   type ExamMode,
 } from "@/features/exam/session";
 import { formatExamTime } from "@/features/exam/timer";
@@ -33,6 +41,113 @@ import { formatExamTime } from "@/features/exam/timer";
 function eventId() {
   return globalThis.crypto?.randomUUID?.() ?? "event-" + Date.now() + "-" + Math.random();
 }
+
+function idempotencyStorageKey(paperId: string, mode: ExamMode) {
+  return `medmock:idempotency:${paperId}:${mode}`;
+}
+
+const examCopy = {
+  en: {
+    switchLanguage: "Switch question language",
+    strictMock: "Strict mock · answers concealed",
+    practice: "Practice · instant review",
+    timeLeft: "Time left",
+    openPalette: "Open question palette",
+    closePalette: "Close question palette",
+    answeredSuffix: "answered",
+    question: (current: number, total: number) => `Question ${current} of ${total}`,
+    optionalLimit: (limit: number) =>
+      `This optional section allows only ${limit} answered question. Clear one response before choosing another.`,
+    correct: "Correct",
+    notQuite: "Not quite",
+    correctAnswer: "Correct answer",
+    previous: "Previous",
+    clearResponse: "Clear response",
+    unmarkReview: "Unmark review",
+    markReview: "Mark for review",
+    saveNext: "Save & next",
+    questionPalette: "Question palette",
+    answered: "Answered",
+    remaining: "Remaining",
+    review: "Review",
+    questions: "questions",
+    goToQuestion: (number: number) => `Go to question ${number}`,
+    marked: "Marked",
+    notAnswered: "Not answered",
+    notVisited: "Not visited",
+    eventsReady: (count: number) => `${count} events ready to sync`,
+    submitTest: "Submit test",
+    submitTitle: "Submit this attempt?",
+    submitDescription: (answered: number, total: number) =>
+      `You answered ${answered} of ${total} questions. Mock answers cannot be changed after submission.`,
+    keepReviewing: "Keep reviewing",
+    confirmSubmission: "Confirm submission",
+    timeUp: "Time is up",
+    submitted: "Attempt submitted",
+    submittedDescription: "Your answers are safely queued for final scoring and synchronization.",
+    viewResults: "View results",
+  },
+  hi: {
+    switchLanguage: "प्रश्न की भाषा बदलें",
+    strictMock: "सख्त मॉक · उत्तर छिपे रहेंगे",
+    practice: "अभ्यास · तुरंत समीक्षा",
+    timeLeft: "समय शेष",
+    openPalette: "प्रश्न पैलेट खोलें",
+    closePalette: "प्रश्न पैलेट बंद करें",
+    answeredSuffix: "उत्तर दिए",
+    question: (current: number, total: number) => `प्रश्न ${current} / ${total}`,
+    optionalLimit: (limit: number) =>
+      `इस वैकल्पिक खंड में केवल ${limit} प्रश्न का उत्तर दिया जा सकता है। दूसरा उत्तर चुनने से पहले एक उत्तर हटाएँ।`,
+    correct: "सही",
+    notQuite: "सही नहीं",
+    correctAnswer: "सही उत्तर",
+    previous: "पिछला",
+    clearResponse: "उत्तर हटाएँ",
+    unmarkReview: "समीक्षा चिह्न हटाएँ",
+    markReview: "समीक्षा के लिए चिह्नित करें",
+    saveNext: "सहेजें और आगे",
+    questionPalette: "प्रश्न पैलेट",
+    answered: "उत्तर दिए",
+    remaining: "शेष",
+    review: "समीक्षा",
+    questions: "प्रश्न",
+    goToQuestion: (number: number) => `प्रश्न ${number} पर जाएँ`,
+    marked: "चिह्नित",
+    notAnswered: "उत्तर नहीं दिया",
+    notVisited: "नहीं देखा",
+    eventsReady: (count: number) => `${count} इवेंट सिंक के लिए तैयार`,
+    submitTest: "टेस्ट जमा करें",
+    submitTitle: "यह प्रयास जमा करें?",
+    submitDescription: (answered: number, total: number) =>
+      `आपने ${total} में से ${answered} प्रश्नों का उत्तर दिया है। जमा करने के बाद मॉक उत्तर बदले नहीं जा सकते।`,
+    keepReviewing: "समीक्षा जारी रखें",
+    confirmSubmission: "जमा करने की पुष्टि करें",
+    timeUp: "समय समाप्त",
+    submitted: "प्रयास जमा हो गया",
+    submittedDescription: "आपके उत्तर अंतिम स्कोरिंग और सिंक के लिए सुरक्षित रूप से कतार में हैं।",
+    viewResults: "परिणाम देखें",
+  },
+} as const;
+
+const syncCopy: Record<"en" | "hi", Record<string, string>> = {
+  en: {},
+  hi: {
+    "Saved locally": "इस डिवाइस पर सहेजा गया",
+    "Saved and synchronized": "सहेजा और सिंक किया गया",
+    "Offline · retrying": "ऑफ़लाइन · फिर प्रयास हो रहा है",
+    "Offline · saved on this device": "ऑफ़लाइन · इस डिवाइस पर सहेजा गया",
+    "Local recovery failed": "स्थानीय पुनर्प्राप्ति विफल",
+    "Local save failed": "स्थानीय सहेजना विफल",
+    "Connecting before submission…": "जमा करने से पहले कनेक्ट हो रहा है…",
+    "Connected · confirm submission again": "कनेक्ट हो गया · जमा करने की फिर पुष्टि करें",
+    "Offline · submission will retry": "ऑफ़लाइन · जमा करना फिर प्रयास करेगा",
+    "Finalizing securely…": "सुरक्षित रूप से अंतिम रूप दिया जा रहा है…",
+    "Submission waiting for answer sync": "जमा करना उत्तर सिंक की प्रतीक्षा में है",
+    "Submitted and scored": "जमा और स्कोर किया गया",
+    "Submission failed · retry safely": "जमा करना विफल · सुरक्षित पुनः प्रयास करें",
+    "Expiry submission will retry": "समय-समाप्त जमा फिर प्रयास करेगा",
+  },
+};
 
 export function ExamWorkspace({
   paper,
@@ -45,7 +160,16 @@ export function ExamWorkspace({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Saved locally");
   const persistenceRef = useRef<IndexedDbAttemptPersistence | undefined>(undefined);
+  const syncControllerRef = useRef<
+    ReturnType<typeof createAttemptEventSyncController> | undefined
+  >(undefined);
+  const attemptRecoveryRef = useRef<
+    ReturnType<typeof createOnlineAttemptRecovery> | undefined
+  >(undefined);
   const expirySubmissionRef = useRef(false);
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const dialogTriggerRef = useRef<HTMLElement | null>(null);
   const [state, dispatch] = useReducer(
     examSessionReducer,
     null,
@@ -60,10 +184,66 @@ export function ExamWorkspace({
       });
     },
   );
+  const stateRef = useRef(state);
+  const text = examCopy[locale];
+  const displayedSyncMessage = syncCopy[locale][syncMessage] ?? syncMessage;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    const dialogOpen = state.status === "submit_pending" || state.status === "submitted";
+    if (!dialogOpen) return;
+
+    const background = backgroundRef.current;
+    const dialog = dialogRef.current;
+    const previouslyFocused =
+      dialogTriggerRef.current ?? (document.activeElement as HTMLElement | null);
+    background?.setAttribute("inert", "");
+    background?.setAttribute("aria-hidden", "true");
+
+    const focusable = Array.from(
+      dialog?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    const initialFocus =
+      dialog?.querySelector<HTMLElement>("[data-initial-focus]") ?? focusable[0];
+    initialFocus?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && state.status === "submit_pending") {
+        event.preventDefault();
+        dispatch({ type: "CANCEL_SUBMIT", occurredAt: Date.now() });
+        return;
+      }
+      if (event.key !== "Tab" || focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      background?.removeAttribute("inert");
+      background?.removeAttribute("aria-hidden");
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      dialogTriggerRef.current = null;
+    };
+  }, [state.status]);
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => dispatch({ type: "TICK", nowMs: Date.now() }),
+      () => dispatch({ type: "TICK", eventId: eventId(), nowMs: Date.now() }),
       1_000,
     );
 
@@ -73,9 +253,31 @@ export function ExamWorkspace({
   useEffect(() => {
     if (process.env.NODE_ENV === "test") return;
     let cancelled = false;
+    const persistence = new IndexedDbAttemptPersistence();
+    persistenceRef.current = persistence;
+    const localAttemptId = "local-" + paper.id;
 
-    async function restore() {
-      const storageKey = `medmock:idempotency:${paper.id}:${mode}`;
+    async function restoreLocalSession() {
+      const saved = await persistence.loadSession(localAttemptId);
+      const queuedEvents = await persistence.getQueuedEvents(localAttemptId);
+      if (!saved && queuedEvents.length === 0) return;
+
+      const baseSession = saved ?? stateRef.current;
+      const eventQueue = mergeAnswerEvents(baseSession.eventQueue, queuedEvents);
+      const restored = {
+        ...baseSession,
+        eventQueue,
+        nextClientSequence: Math.max(
+          baseSession.nextClientSequence,
+          ...eventQueue.map((event) => event.clientSequence + 1),
+        ),
+      };
+      stateRef.current = restored;
+      dispatch({ type: "RESTORE_SESSION", state: restored });
+    }
+
+    async function connect() {
+      const storageKey = idempotencyStorageKey(paper.id, mode);
       let idempotencyKey = window.localStorage.getItem(storageKey);
       if (!idempotencyKey) {
         idempotencyKey = crypto.randomUUID();
@@ -97,29 +299,98 @@ export function ExamWorkspace({
 
       if (!response.ok) throw new Error("Attempt creation failed.");
       const created = await response.json();
-      const persistence = new IndexedDbAttemptPersistence();
-      persistenceRef.current = persistence;
       const saved = await persistence.loadSession(created.attemptId);
-      const restored = saved ?? createExamSession({
-        attemptId: created.attemptId,
-        paper,
-        mode,
-        nowMs: Date.now(),
-        deadlineAtMs: Date.parse(created.deadlineAt),
+      const serverQueuedEvents = await persistence.getQueuedEvents(created.attemptId);
+      const currentSession = stateRef.current;
+      const baseSession = saved ?? currentSession;
+      const rebound = rebindExamSessionAttempt(
+        baseSession,
+        created.attemptId,
+        Date.parse(created.deadlineAt),
+      );
+      const localEvents = currentSession.attemptId.startsWith("local-")
+        ? currentSession.eventQueue.map((event) => ({
+            ...event,
+            attemptId: created.attemptId,
+          }))
+        : [];
+      const eventQueue = mergeAnswerEvents(
+        mergeAnswerEvents(rebound.eventQueue, serverQueuedEvents),
+        localEvents,
+      );
+      const restored = {
+        ...rebound,
+        eventQueue,
+        nextClientSequence: Math.max(
+          rebound.nextClientSequence,
+          ...eventQueue.map((event) => event.clientSequence + 1),
+        ),
+      };
+      syncControllerRef.current = createAttemptEventSyncController({
+        getEvents: () => stateRef.current.eventQueue,
+        sendEvents: async (events) => {
+          const eventResponse = await fetch(
+            `/api/attempts/${created.attemptId}/events`,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ events }),
+            },
+          );
+          if (!eventResponse.ok) throw new Error("Sync failed");
+          return eventResponse.json();
+        },
+        acknowledge: async (eventIds) => {
+          await persistence.markEventsSynced(eventIds);
+          const acknowledged = new Set(eventIds);
+          stateRef.current = {
+            ...stateRef.current,
+            eventQueue: stateRef.current.eventQueue.filter(
+              (event) => !acknowledged.has(event.id),
+            ),
+          };
+          dispatch({ type: "ACK_EVENTS", eventIds });
+          setSyncMessage("Saved and synchronized");
+        },
       });
 
       if (!cancelled) {
+        await persistence.saveSession(restored);
+        await persistence.queueEvents(restored.eventQueue);
+        stateRef.current = restored;
         dispatch({ type: "RESTORE_SESSION", state: restored });
         setSyncMessage("Saved and synchronized");
+        if (restored.eventQueue.length > 0) {
+          void syncControllerRef.current.request().catch(() => {
+            setSyncMessage("Offline · retrying");
+          });
+        }
       }
     }
 
-    restore().catch(() => {
-      if (!cancelled) setSyncMessage("Offline · saved on this device");
+    const recovery = createOnlineAttemptRecovery({
+      connect,
+      onDisconnected() {
+        if (!cancelled) setSyncMessage("Offline · saved on this device");
+      },
+      subscribeOnline(listener) {
+        window.addEventListener("online", listener);
+        return () => window.removeEventListener("online", listener);
+      },
     });
+    attemptRecoveryRef.current = recovery;
+
+    void restoreLocalSession()
+      .catch(() => setSyncMessage("Local recovery failed"))
+      .finally(() => {
+        if (!cancelled) void recovery.start();
+      });
 
     return () => {
       cancelled = true;
+      recovery.stop();
+      attemptRecoveryRef.current = undefined;
     };
   }, [mode, paper]);
 
@@ -132,59 +403,49 @@ export function ExamWorkspace({
 
     if (state.eventQueue.length === 0 || state.attemptId.startsWith("local-")) return;
 
-    fetch(`/api/attempts/${state.attemptId}/events`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ events: state.eventQueue }),
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Sync failed");
-        const result = await response.json();
-        const eventIds = [...result.acceptedEventIds, ...result.duplicateEventIds];
-        await persistence.markEventsSynced(eventIds);
-        dispatch({ type: "ACK_EVENTS", eventIds });
-        setSyncMessage("Saved and synchronized");
-      })
+    syncControllerRef.current
+      ?.request()
       .catch(() => setSyncMessage("Offline · retrying"));
   }, [state]);
 
   const confirmSubmission = useCallback(async () => {
     if (state.attemptId.startsWith("local-")) {
-      dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.now() });
+      setSyncMessage("Connecting before submission…");
+      const connected = await attemptRecoveryRef.current?.retry();
+      setSyncMessage(
+        connected
+          ? "Connected · confirm submission again"
+          : "Offline · submission will retry",
+      );
       return;
     }
 
-    setSyncMessage("Finalizing securely…");
-    if (state.eventQueue.length > 0) {
-      const eventResponse = await fetch(`/api/attempts/${state.attemptId}/events`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ events: state.eventQueue }),
-      });
-
-      if (!eventResponse.ok) {
+    try {
+      setSyncMessage("Finalizing securely…");
+      if (stateRef.current.eventQueue.length > 0) {
+        await syncControllerRef.current?.request();
+      }
+      if (stateRef.current.eventQueue.length > 0) {
         setSyncMessage("Submission waiting for answer sync");
         return;
       }
-    }
 
-    const response = await fetch(`/api/attempts/${state.attemptId}/submit`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ idempotencyKey: `submit:${state.attemptId}` }),
-    });
+      const response = await fetch(`/api/attempts/${state.attemptId}/submit`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: `submit:${state.attemptId}` }),
+      });
 
-    if (response.ok) {
+      if (!response.ok) throw new Error("Submission failed");
       const result = await response.json();
+      window.localStorage.removeItem(idempotencyStorageKey(paper.id, mode));
       dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.parse(result.submittedAt) });
       setSyncMessage("Submitted and scored");
-    } else {
+    } catch {
       setSyncMessage("Submission failed · retry safely");
     }
-  }, [state.attemptId, state.eventQueue]);
+  }, [mode, paper.id, state.attemptId]);
 
   useEffect(() => {
     if (
@@ -229,15 +490,16 @@ export function ExamWorkspace({
     [paper.sections, state.answers],
   );
 
-  function navigate(questionId: string | undefined) {
+  function navigate(questionId: string | undefined, occurredAt: number) {
     if (questionId) {
-      dispatch({ type: "NAVIGATE", questionId });
+      dispatch({ type: "NAVIGATE", eventId: eventId(), questionId, occurredAt });
       setPaletteOpen(false);
     }
   }
 
   return (
     <main className="exam-shell">
+      <div data-testid="exam-background" ref={backgroundRef}>
       <header className="exam-topbar">
         <Link aria-label="MedMock home" href="/">
           <BrandMark compact />
@@ -246,12 +508,12 @@ export function ExamWorkspace({
           <strong>{paper.title[locale]}</strong>
           <span>
             <ShieldCheck aria-hidden="true" />
-            {mode === "mock" ? "Strict mock · answers concealed" : "Practice · instant review"}
+            {mode === "mock" ? text.strictMock : text.practice}
           </span>
         </div>
         <div className="exam-topbar__tools">
           <Button
-            aria-label="Switch question language"
+            aria-label={text.switchLanguage}
             className="exam-language"
             onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
             tone="ghost"
@@ -262,10 +524,10 @@ export function ExamWorkspace({
           <ThemeToggle />
           <div className={"exam-timer" + (state.remainingMs < 15 * 60_000 ? " is-low" : "")}>
             <Timer aria-hidden="true" />
-            <span><small>Time left</small><strong>{formatExamTime(state.remainingMs)}</strong></span>
+            <span><small>{text.timeLeft}</small><strong>{formatExamTime(state.remainingMs)}</strong></span>
           </div>
           <Button
-            aria-label="Open question palette"
+            aria-label={text.openPalette}
             className="exam-palette-toggle"
             onClick={() => setPaletteOpen(true)}
             tone="ghost"
@@ -280,11 +542,11 @@ export function ExamWorkspace({
           <button
             className={section.id === currentSection.id ? "is-active" : ""}
             key={section.id}
-            onClick={() => navigate(section.questionIds[0])}
+            onClick={() => navigate(section.questionIds[0], Date.now())}
             type="button"
           >
             <span>{section.title[locale]}</span>
-            <small>{sectionCounts[section.id] ?? 0}/{section.questionIds.length} answered</small>
+            <small>{sectionCounts[section.id] ?? 0}/{section.questionIds.length} {text.answeredSuffix}</small>
           </button>
         ))}
       </div>
@@ -293,7 +555,7 @@ export function ExamWorkspace({
         <section className="question-stage">
           <div className="question-stage__meta">
             <div>
-              <span>Question {currentIndex + 1} of {paper.questions.length}</span>
+              <span>{text.question(currentIndex + 1, paper.questions.length)}</span>
               <strong>{currentQuestion.topic}</strong>
             </div>
             <div className="marking-chip">
@@ -305,8 +567,7 @@ export function ExamWorkspace({
           {state.limitWarning && (
             <div className="exam-warning" role="alert">
               <AlertCircle aria-hidden="true" />
-              This optional section allows only {state.limitWarning.selectionLimit} answered question.
-              Clear one response before choosing another.
+              {text.optionalLimit(state.limitWarning.selectionLimit)}
             </div>
           )}
 
@@ -354,8 +615,8 @@ export function ExamWorkspace({
                   {feedback.status === "correct" ? <Check aria-hidden="true" /> : <X aria-hidden="true" />}
                 </div>
                 <section>
-                  <p>{feedback.status === "correct" ? "Correct" : "Not quite"}</p>
-                  <h2>Correct answer: {feedback.acceptedOptionIds.join(", ")}</h2>
+                  <p>{feedback.status === "correct" ? text.correct : text.notQuite}</p>
+                  <h2>{text.correctAnswer}: {feedback.acceptedOptionIds.join(", ")}</h2>
                   {feedback.solution && <span>{feedback.solution[locale]}</span>}
                 </section>
               </div>
@@ -366,10 +627,10 @@ export function ExamWorkspace({
             <div>
               <Button
                 disabled={!previousQuestion}
-                onClick={() => navigate(previousQuestion?.id)}
+                onClick={() => navigate(previousQuestion?.id, Date.now())}
                 tone="ghost"
               >
-                <ChevronLeft aria-hidden="true" size={17} /> Previous
+                <ChevronLeft aria-hidden="true" size={17} /> {text.previous}
               </Button>
               <Button
                 disabled={!answer || mode === "practice"}
@@ -383,7 +644,7 @@ export function ExamWorkspace({
                 }
                 tone="ghost"
               >
-                Clear response
+                {text.clearResponse}
               </Button>
             </div>
             <div>
@@ -395,11 +656,14 @@ export function ExamWorkspace({
               >
                 <Bookmark aria-hidden="true" size={16} />
                 {state.markedForReview.includes(currentQuestion.id)
-                  ? "Unmark review"
-                  : "Mark for review"}
+                  ? text.unmarkReview
+                  : text.markReview}
               </Button>
-              <Button disabled={!nextQuestion} onClick={() => navigate(nextQuestion?.id)}>
-                Save & next <ChevronRight aria-hidden="true" size={17} />
+              <Button
+                disabled={!nextQuestion}
+                onClick={() => navigate(nextQuestion?.id, Date.now())}
+              >
+                {text.saveNext} <ChevronRight aria-hidden="true" size={17} />
               </Button>
             </div>
           </div>
@@ -407,30 +671,30 @@ export function ExamWorkspace({
 
         <aside className={"exam-palette" + (paletteOpen ? " is-open" : "")}>
           <div className="exam-palette__mobile-head">
-            <strong>Question palette</strong>
-            <Button aria-label="Close question palette" onClick={() => setPaletteOpen(false)} tone="ghost">
+            <strong>{text.questionPalette}</strong>
+            <Button aria-label={text.closePalette} onClick={() => setPaletteOpen(false)} tone="ghost">
               <X aria-hidden="true" />
             </Button>
           </div>
           <div className="exam-progress-card">
             <div>
               <strong>{answeredCount}</strong>
-              <span>Answered</span>
+              <span>{text.answered}</span>
             </div>
             <div>
               <strong>{paper.questions.length - answeredCount}</strong>
-              <span>Remaining</span>
+              <span>{text.remaining}</span>
             </div>
             <div>
               <strong>{reviewCount}</strong>
-              <span>Review</span>
+              <span>{text.review}</span>
             </div>
           </div>
 
           <div className="palette-section">
             <div>
               <span>{currentSection.title[locale]}</span>
-              <small>{currentSection.questionIds.length} questions</small>
+              <small>{currentSection.questionIds.length} {text.questions}</small>
             </div>
             <div className="palette-grid">
               {paper.questions.map((question, index) => {
@@ -441,7 +705,7 @@ export function ExamWorkspace({
 
                 return (
                   <button
-                    aria-label={"Go to question " + (index + 1)}
+                    aria-label={text.goToQuestion(index + 1)}
                     className={[
                       current ? "is-current" : "",
                       answered ? "is-answered" : "",
@@ -449,7 +713,7 @@ export function ExamWorkspace({
                       visited && !answered && !marked ? "is-visited" : "",
                     ].filter(Boolean).join(" ")}
                     key={question.id}
-                    onClick={() => navigate(question.id)}
+                    onClick={() => navigate(question.id, Date.now())}
                     type="button"
                   >
                     {index + 1}
@@ -460,22 +724,30 @@ export function ExamWorkspace({
           </div>
 
           <div className="palette-legend">
-            <span><i className="answered" /> Answered</span>
-            <span><i className="review" /> Marked</span>
-            <span><i className="visited" /> Not answered</span>
-            <span><i /> Not visited</span>
+            <span><i className="answered" /> {text.answered}</span>
+            <span><i className="review" /> {text.marked}</span>
+            <span><i className="visited" /> {text.notAnswered}</span>
+            <span><i /> {text.notVisited}</span>
           </div>
 
           <div className="sync-status">
             <Cloud aria-hidden="true" />
-            <span><strong>{syncMessage}</strong><small>{state.eventQueue.length} events ready to sync</small></span>
+            <span><strong>{displayedSyncMessage}</strong><small>{text.eventsReady(state.eventQueue.length)}</small></span>
           </div>
 
-          <Button className="submit-test-button" onClick={() => dispatch({ type: "REQUEST_SUBMIT" })} tone="secondary">
+          <Button
+            className="submit-test-button"
+            onClick={(event) => {
+              dialogTriggerRef.current = event.currentTarget;
+              dispatch({ type: "REQUEST_SUBMIT", eventId: eventId(), occurredAt: Date.now() });
+            }}
+            tone="secondary"
+          >
             <ListChecks aria-hidden="true" size={17} />
-            Submit test
+            {text.submitTest}
           </Button>
         </aside>
+      </div>
       </div>
 
       {state.status === "submit_pending" && (
@@ -485,17 +757,18 @@ export function ExamWorkspace({
             aria-labelledby="submit-attempt-title"
             aria-modal="true"
             className="exam-submit-modal"
+            ref={dialogRef}
             role="dialog"
           >
             <div className="exam-submit-modal__icon">
               <Flag aria-hidden="true" />
             </div>
-            <h2 id="submit-attempt-title">Submit this attempt?</h2>
-            <p id="submit-attempt-description">You answered {answeredCount} of {paper.questions.length} questions. Mock answers cannot be changed after submission.</p>
+            <h2 id="submit-attempt-title">{text.submitTitle}</h2>
+            <p id="submit-attempt-description">{text.submitDescription(answeredCount, paper.questions.length)}</p>
             <div>
-              <Button onClick={() => dispatch({ type: "CANCEL_SUBMIT" })} tone="ghost">Keep reviewing</Button>
-              <Button autoFocus onClick={confirmSubmission}>
-                Confirm submission
+              <Button onClick={() => dispatch({ type: "CANCEL_SUBMIT", occurredAt: Date.now() })} tone="ghost">{text.keepReviewing}</Button>
+              <Button autoFocus data-initial-focus onClick={confirmSubmission}>
+                {text.confirmSubmission}
               </Button>
             </div>
           </section>
@@ -508,12 +781,13 @@ export function ExamWorkspace({
             aria-labelledby="submission-complete-title"
             aria-modal="true"
             className="exam-submit-modal"
+            ref={dialogRef}
             role="dialog"
           >
             <div className="exam-submit-modal__icon is-success"><Check aria-hidden="true" /></div>
-            <h2 id="submission-complete-title">{state.submissionReason === "expired" ? "Time is up" : "Attempt submitted"}</h2>
-            <p>Your answers are safely queued for final scoring and synchronization.</p>
-            <Link className="button button--primary" href="/dashboard">View results</Link>
+            <h2 id="submission-complete-title">{state.submissionReason === "expired" ? text.timeUp : text.submitted}</h2>
+            <p>{text.submittedDescription}</p>
+            <Link className="button button--primary" data-initial-focus href="/dashboard">{text.viewResults}</Link>
           </section>
         </div>
       )}

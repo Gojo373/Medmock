@@ -171,7 +171,8 @@ function sameEvent(left: AnswerEventContract, right: AnswerEventContract) {
     left.type === right.type &&
     left.selectedOptionId === right.selectedOptionId &&
     left.occurredAt === right.occurredAt &&
-    left.clientSequence === right.clientSequence
+    left.clientSequence === right.clientSequence &&
+    left.timeSpentMs === right.timeSpentMs
   );
 }
 
@@ -184,7 +185,7 @@ function eventBelongsToPaper(
   );
 
   if (!question) return false;
-  if (event.type === "answer_cleared") return true;
+  if (event.type !== "answer_selected") return true;
 
   return question.options.some(
     (option) => option.id === event.selectedOptionId,
@@ -221,6 +222,7 @@ function appendMemoryAttemptEvents(
 
     if (
       record.attempt.mode === "practice" &&
+      event.type === "answer_selected" &&
       lockedPracticeQuestions.has(event.questionId)
     ) {
       return { ok: false, error: "practice_answer_locked", eventId: event.id };
@@ -272,7 +274,7 @@ function buildAttemptAnswers(record: AttemptRecord) {
             questionId: question.id,
             selectedOptionId: answer.selectedOptionId,
             answeredAt: new Date(answer.answeredAt).toISOString(),
-            timeSpentMs: 0,
+            timeSpentMs: answer.timeSpentMs,
           },
         ]
       : [];
@@ -461,6 +463,7 @@ function eventFromRow(row: Record<string, unknown>): AnswerEventContract {
       : {}),
     occurredAt: Number(row.occurred_at_ms),
     clientSequence: Number(row.client_sequence),
+    timeSpentMs: Number(row.time_spent_ms ?? 0),
   };
 }
 
@@ -601,7 +604,7 @@ async function submitPersistentAttemptRecord(
             questionId: question.id,
             selectedOptionId: answer.selectedOptionId,
             answeredAt: new Date(answer.answeredAt).toISOString(),
-            timeSpentMs: 0,
+            timeSpentMs: answer.timeSpentMs,
           }]
         : [];
     }),
