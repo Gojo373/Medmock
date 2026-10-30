@@ -9,6 +9,7 @@ import {
 } from "@/features/imports/schema";
 import {
   createGeminiExtractionProvider,
+  createAgentRouterExtractionProvider,
   createOpenAIExtractionProvider,
   selectExtractionProviders,
 } from "@/features/imports/providers";
@@ -117,6 +118,10 @@ describe("provider selection and adapters", () => {
     const registry = {
       openai: { id: "openai", extract: async () => document("openai") },
       gemini: { id: "gemini", extract: async () => document("gemini") },
+      agentrouter: {
+        id: "agentrouter",
+        extract: async () => document("openai"),
+      },
     } as const;
 
     expect(selectExtractionProviders("openai", registry).map((item) => item.id)).toEqual([
@@ -129,6 +134,46 @@ describe("provider selection and adapters", () => {
       "openai",
       "gemini",
     ]);
+    expect(
+      selectExtractionProviders("agentrouter", registry).map((item) => item.id),
+    ).toEqual(["agentrouter"]);
+  });
+
+  it("uses AgentRouter Responses with inline multimodal content", async () => {
+    const requests: unknown[] = [];
+    const provider = createAgentRouterExtractionProvider({
+      client: {
+        responses: {
+          parse: async (request: unknown) => {
+            requests.push(request);
+            return { output_parsed: payload() };
+          },
+        },
+      },
+      format: { type: "json_schema" },
+      model: "agentrouter-vision-model",
+    });
+
+    const extracted = await provider.extract({
+      fileId: "data:image/png;base64,aW1hZ2U=",
+      fileName: "paper.png",
+      mimeType: "image/png",
+    });
+
+    expect(extracted.provider).toBe("agentrouter");
+    expect(requests[0]).toMatchObject({
+      model: "agentrouter-vision-model",
+      input: [
+        { role: "system" },
+        {
+          role: "user",
+          content: [
+            { type: "input_image", image_url: "data:image/png;base64,aW1hZ2U=" },
+            { type: "input_text" },
+          ],
+        },
+      ],
+    });
   });
 
   it("uses an OpenAI Responses file input with schema-constrained parsed output", async () => {

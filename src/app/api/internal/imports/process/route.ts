@@ -1,8 +1,5 @@
 import { processNextImportJob } from "@/features/imports/server/import-processor";
-import {
-  createGeminiProviderRuntime,
-  createOpenAIProviderRuntime,
-} from "@/features/imports/server/provider-clients";
+import { createConfiguredProviderRuntimes } from "@/features/imports/server/provider-runtime-registry";
 import {
   createImportWorkerHandler,
   type WorkerHandlerDependencies,
@@ -11,24 +8,12 @@ import { SupabaseImportProcessingRepository } from "@/features/imports/server/su
 
 function productionDependencies(): WorkerHandlerDependencies {
   const secret = process.env.IMPORT_WORKER_SECRET?.trim() || process.env.CRON_SECRET?.trim();
-  const openAIKey = process.env.OPENAI_API_KEY?.trim();
-  const geminiKey = process.env.GEMINI_API_KEY?.trim();
-
-  if (!secret || !openAIKey || !geminiKey) {
+  if (!secret) {
     throw new Error("Import worker environment is incomplete.");
   }
 
   const repository = new SupabaseImportProcessingRepository();
-  const runtimes = {
-    openai: createOpenAIProviderRuntime({
-      apiKey: openAIKey,
-      model: process.env.OPENAI_IMPORT_MODEL?.trim() || "gpt-5-mini",
-    }),
-    gemini: createGeminiProviderRuntime({
-      apiKey: geminiKey,
-      model: process.env.GEMINI_IMPORT_MODEL?.trim() || "gemini-2.5-flash",
-    }),
-  };
+  const runtimes = createConfiguredProviderRuntimes();
 
   return {
     secret,

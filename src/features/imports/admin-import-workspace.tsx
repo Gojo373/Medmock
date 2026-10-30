@@ -102,6 +102,13 @@ const providers: Array<{
     accent: "gemini",
   },
   {
+    id: "agentrouter",
+    title: "AgentRouter",
+    subtitle: "Multimodal Responses · inline PDF/image",
+    label: "Use AgentRouter",
+    accent: "agentrouter",
+  },
+  {
     id: "both",
     title: "Both",
     subtitle: "Compare fields and flag disagreements",

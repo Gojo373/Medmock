@@ -81,7 +81,7 @@ for each row execute function public.protect_published_paper_version();
 create table public.import_jobs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references public.profiles(id),
-  provider_selection text not null check (provider_selection in ('openai', 'gemini', 'both')),
+  provider_selection text not null check (provider_selection in ('openai', 'gemini', 'agentrouter', 'both')),
   status text not null check (
     status in ('uploading', 'uploaded', 'extracting', 'review_required', 'ready_to_publish', 'published', 'failed')
   ),

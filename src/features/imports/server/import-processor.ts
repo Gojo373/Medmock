@@ -42,11 +42,14 @@ export type ProviderRuntime = {
   uploadFile(file: File): Promise<string>;
 };
 
-type ProviderRuntimes = Record<"openai" | "gemini", ProviderRuntime>;
+export type ProviderRuntimes = Partial<
+  Record<"openai" | "gemini" | "agentrouter", ProviderRuntime>
+>;
 
 function selectedRuntimeIds(selection: ProviderSelection) {
   if (selection === "openai") return ["openai"] as const;
   if (selection === "gemini") return ["gemini"] as const;
+  if (selection === "agentrouter") return ["agentrouter"] as const;
   return ["openai", "gemini"] as const;
 }
 
@@ -136,6 +139,7 @@ export async function processClaimedImportJob(
 
     for (const providerId of selectedRuntimeIds(job.providerSelection)) {
       const runtime = runtimes[providerId];
+      if (!runtime) throw new Error(`${providerId} import provider is not configured.`);
       const source = await prepareSource(files, downloaded, runtime);
       const document = await runtime.provider.extract(source);
       documents.push(applyOfficialAnswerKeyEntries(document, answerKey));

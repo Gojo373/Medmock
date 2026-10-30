@@ -18,18 +18,22 @@ describe("AdminImportWorkspace", () => {
     expect(screen.getByText("Nothing publishes without your approval.")).toBeInTheDocument();
   });
 
-  it("lets the admin choose OpenAI, Gemini, or both", async () => {
+  it("lets the admin choose OpenAI, Gemini, AgentRouter, or both", async () => {
     const user = userEvent.setup();
     render(<AdminImportWorkspace />);
 
     const both = screen.getByRole("button", { name: "Use both providers" });
     const openai = screen.getByRole("button", { name: "Use OpenAI" });
+    const agentrouter = screen.getByRole("button", { name: "Use AgentRouter" });
 
     expect(both).toHaveAttribute("aria-pressed", "true");
     await user.click(openai);
 
     expect(openai).toHaveAttribute("aria-pressed", "true");
     expect(both).toHaveAttribute("aria-pressed", "false");
+    await user.click(agentrouter);
+    expect(agentrouter).toHaveAttribute("aria-pressed", "true");
+    expect(openai).toHaveAttribute("aria-pressed", "false");
   });
 
   it("uploads the selected source and starts a durable import job", async () => {

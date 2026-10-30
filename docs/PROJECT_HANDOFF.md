@@ -2,6 +2,47 @@
 
 Last updated: 2026-10-30 17:20 IST
 
+## Latest checkpoint — staging database and AgentRouter expansion
+
+This section supersedes the local-only checkpoint immediately below it.
+
+- The main Supabase migration was applied successfully to the configured
+  project. REST access, leaderboard RPC, and the private `paper-imports` bucket
+  return healthy responses.
+- A transaction-only staging smoke test passed and rolled back cleanly:
+  anonymous users saw only published versions; admin-only imports, profile and
+  attempt isolation, append/finalize RPCs, replay idempotency, and published
+  immutability all behaved correctly.
+- Real Gemini validation passed with `gemini-3.8-flash`: a generated bilingual
+  scanned PDF uploaded, extracted one bilingual question with usable answer
+  structure, and the temporary provider file was removed. Google reported
+  `gemini-2.5-flash` unavailable to new users, so the default/example were
+  updated to `gemini-3.8-flash`.
+- OpenAI key/model access is valid, but Responses requests return
+  `insufficient_quota / credit_balance_exhausted`. OpenAI is no longer required
+  for Gemini- or AgentRouter-selected jobs.
+- AgentRouter is implemented as an independent provider using its supported
+  `/v1/responses` boundary: JPG/PNG use inline `input_image`, PDFs use inline
+  `input_file`, strict JSON output uses the shared extraction schema, and source
+  size is capped at 15 MB to bound base64 memory/request growth.
+- The worker now configures OpenAI, Gemini, and AgentRouter independently; the
+  admin UI exposes AgentRouter; the staging `import_jobs` constraint now accepts
+  `agentrouter`.
+- Fresh verification after the provider expansion: 27 files / 120 tests passed;
+  lint, type-check, and production build exited 0; 14 static pages and all
+  dynamic routes plus Proxy compiled.
+- Playwright still exits before discovery on Android with `Unsupported platform:
+  android`.
+
+Current external blockers:
+
+- `AGENT_ROUTER_API_KEY` and `AGENT_ROUTER_MODEL` are not populated, so live
+  AgentRouter image/PDF extraction is not yet evidenced.
+- Supabase email auth is enabled, but Google auth is disabled.
+- `NEXT_PUBLIC_SITE_URL` is still local until Vercel deployment.
+- Linux authenticated Playwright/axe, deployed auth/cron/signed-upload checks,
+  and the 500-concurrent-attempt load test remain outstanding.
+
 ## Active checkpoint — all locally possible final-review fixes complete
 
 This section supersedes every restart checkpoint below it.

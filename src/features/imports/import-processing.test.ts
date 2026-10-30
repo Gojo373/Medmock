@@ -38,7 +38,7 @@ const files: StoredImportFile[] = [
   },
 ];
 
-function extracted(provider: "openai" | "gemini", source: unknown) {
+function extracted(provider: "openai" | "gemini" | "agentrouter", source: unknown) {
   return ExtractionDocumentSchema.parse({
     schemaVersion: 1,
     provider,
@@ -94,7 +94,7 @@ function repository(overrides: Partial<ImportProcessingRepository> = {}) {
   } satisfies ImportProcessingRepository;
 }
 
-function runtime(id: "openai" | "gemini") {
+function runtime(id: "openai" | "gemini" | "agentrouter") {
   const provider: ExtractionProvider = {
     id,
     extract: vi.fn().mockImplementation(async (source) => extracted(id, source)),
@@ -107,6 +107,29 @@ function runtime(id: "openai" | "gemini") {
 }
 
 describe("durable import processing", () => {
+  it("processes an AgentRouter-selected job without invoking other providers", async () => {
+    const job: ClaimedImportJob = {
+      id: "import-1",
+      providerSelection: "agentrouter",
+      processingAttempts: 1,
+      claimToken: "worker-1",
+    };
+    const store = repository();
+    const openai = runtime("openai");
+    const gemini = runtime("gemini");
+    const agentrouter = runtime("agentrouter");
+
+    await processClaimedImportJob(job, store, {
+      openai,
+      gemini,
+      agentrouter,
+    });
+
+    expect(agentrouter.provider.extract).toHaveBeenCalledOnce();
+    expect(openai.provider.extract).not.toHaveBeenCalled();
+    expect(gemini.provider.extract).not.toHaveBeenCalled();
+  });
+
   it("applies official provenance only to answers extracted from the answer-key attachment", async () => {
     const job: ClaimedImportJob = {
       id: "import-1",

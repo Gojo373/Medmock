@@ -7,8 +7,17 @@ import {
   SubjectSchema,
 } from "@/features/exam/domain";
 
-export const ExtractionProviderIdSchema = z.enum(["openai", "gemini"]);
-export const ProviderSelectionSchema = z.enum(["openai", "gemini", "both"]);
+export const ExtractionProviderIdSchema = z.enum([
+  "openai",
+  "gemini",
+  "agentrouter",
+]);
+export const ProviderSelectionSchema = z.enum([
+  "openai",
+  "gemini",
+  "agentrouter",
+  "both",
+]);
 
 export const PartialLocalizedTextSchema = z
   .object({

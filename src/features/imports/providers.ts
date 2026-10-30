@@ -34,6 +34,10 @@ export function selectExtractionProviders(
     return [registry.gemini];
   }
 
+  if (selection === "agentrouter") {
+    return [registry.agentrouter];
+  }
+
   return [registry.openai, registry.gemini];
 }
 
@@ -42,6 +46,68 @@ type OpenAIResponsesClient = {
     parse(request: unknown): Promise<{ output_parsed: unknown }>;
   };
 };
+
+function inlineAgentRouterPart(
+  source: NonNullable<ExtractionSource["answerKey"]> | ExtractionSource,
+) {
+  if (source.mimeType === "application/pdf") {
+    return {
+      type: "input_file" as const,
+      filename: source.fileName,
+      file_data: source.fileId,
+    };
+  }
+  return {
+    type: "input_image" as const,
+    image_url: source.fileId,
+  };
+}
+
+export function createAgentRouterExtractionProvider({
+  client,
+  model,
+  format,
+}: {
+  client: OpenAIResponsesClient;
+  model: string;
+  format: unknown;
+}): ExtractionProvider {
+  return {
+    id: "agentrouter",
+    async extract(source) {
+      const supportingFiles = [source.answerKey, source.solution]
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .map(inlineAgentRouterPart);
+      const response = await client.responses.parse({
+        model,
+        input: [
+          { role: "system", content: extractionPrompt },
+          {
+            role: "user",
+            content: [
+              inlineAgentRouterPart(source),
+              ...supportingFiles,
+              {
+                type: "input_text",
+                text:
+                  "The first source is the question paper. Any second source is the official answer key and any third source is the solution booklet. Return the complete paper using the configured extraction schema.",
+              },
+            ],
+          },
+        ],
+        text: { format },
+      });
+      const extracted = ExtractionPayloadSchema.parse(
+        normalizeProviderExtractionPayload(response.output_parsed),
+      );
+      return ExtractionDocumentSchema.parse({
+        ...extracted,
+        provider: "agentrouter",
+        source,
+      });
+    },
+  };
+}
 
 export function createOpenAIExtractionProvider({
   client,
