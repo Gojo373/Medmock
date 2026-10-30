@@ -3,6 +3,7 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
+playwright/.auth/
 .env*
 !.env.example
 .vercel/
