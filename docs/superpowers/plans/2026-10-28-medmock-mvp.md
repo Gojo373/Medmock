@@ -202,3 +202,10 @@ production build exited 0 with 14/14 pages and all dynamic routes plus Proxy.
 The browser command exited 1 before discovery with `Unsupported platform:
 android` under Node v24.22.1. The action of running the gates is complete;
 the mandatory successful browser/external validation for Task 6 remains open.
+
+Scoped re-review note: all 11 original findings were confirmed addressed, but
+the fix diff has one deterministic Important browser-test defect (the admin axe
+journey expects a hidden file input to be visible) and one Minor browser-storage
+fallback consistency defect after denied mutations. The single permitted final
+fix wave is exhausted; both are parked with explicit ledger rulings. Task 6
+remains open and is not ready to merge or deploy.

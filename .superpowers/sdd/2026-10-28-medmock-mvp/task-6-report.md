@@ -568,3 +568,15 @@ was added. Task 6 and production readiness remain incomplete.
 
 Commit subject: `fix: resolve final attempt and review integrity findings`.
 `AGENTS.md` and private environment files are excluded.
+
+## Scoped final re-review
+
+The re-review confirmed all 11 original findings addressed and no new Critical
+application breakage. It found one new Important issue: the admin Playwright/axe
+journey requires the intentionally hidden paper-file input to be visible, so a
+configured Linux run fails before protected admin axe coverage. It also found a
+new Minor inconsistency: failed browser-storage mutations can be obscured by
+stale readable localStorage values.
+
+Per the single-wave final-review rule, no second fix wave was run. Both findings
+are recorded with rulings in the progress ledger. Task 6 remains open.

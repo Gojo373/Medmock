@@ -39,6 +39,25 @@ See the final wave section in
 results, and self-review. The wave is committed under the subject above;
 locate its SHA with `git log`. `AGENTS.md` remains untouched and excluded.
 
+### Scoped re-review residuals
+
+The single permitted final fix wave was re-reviewed against `3309bb8..ac829a4`.
+All 11 original findings were confirmed addressed, but the fix diff introduced
+two residuals:
+
+- **Important:** the admin Playwright/axe journey asserts that the deliberately
+  hidden paper-file input is visible, so a configured Linux run fails before
+  protected admin axe coverage. It must use the visible upload control or
+  heading and initialize the admin locale consistently.
+- **Minor:** guarded browser storage prevents crashes, but failed writes or
+  removals can still be masked by an older readable localStorage value. Failed
+  per-key mutations need an in-memory value or deletion tombstone.
+
+The final-review workflow permits no second fix wave. Both are parked with
+explicit ledger rulings. The Important browser-test defect is load-bearing, so
+Task 6 remains open independently of the external access/platform gates. Do not
+claim merge or production readiness.
+
 Task 6 is **not complete** until Linux authenticated Playwright/axe and the
 existing external gates pass: staging SQL/RLS plus the unapplied provider-removal
 migration, deployed Google/email auth/cookies/signed uploads/cron/Vercel checks,
