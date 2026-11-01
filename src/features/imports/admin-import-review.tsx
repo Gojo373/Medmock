@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, Languages, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
@@ -54,14 +54,55 @@ const copy = {
   },
 } as const;
 
+const flagExplanations = {
+  en: {
+    admin_review: "An admin must review and approve every extracted question.",
+    provider_conflict: "Providers disagree on this field; choose the reviewed value.",
+    low_confidence: "This extracted field needs a human confidence check.",
+    missing_field: "Required reviewed content is missing or invalid.",
+    invalid_answer_key: "The answer key references a missing or invalid option; check the reviewed answer.",
+  },
+  hi: {
+    admin_review: "एडमिन को हर निकाले गए प्रश्न की समीक्षा और स्वीकृति देनी होगी।",
+    provider_conflict: "इस फ़ील्ड पर प्रदाताओं में मतभेद है। समीक्षित मान चुनें।",
+    low_confidence: "निकाले गए इस फ़ील्ड के विश्वास स्तर की मानव जाँच आवश्यक है।",
+    missing_field: "आवश्यक समीक्षित सामग्री अनुपलब्ध या अमान्य है।",
+    invalid_answer_key: "उत्तर कुंजी में अनुपलब्ध या अमान्य विकल्प है। समीक्षित उत्तर की जाँच करें।",
+  },
+} satisfies Record<"en" | "hi", Record<ReviewFlag["code"], string>>;
+
 function providerLabel(provider: string) {
   if (provider === "openai") return "OpenAI";
   if (provider === "gemini") return "Gemini";
   return provider;
 }
 
-function formatReviewValue(value: unknown) {
-  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+function formatReviewValue(value: unknown, depth = 0): ReactNode {
+  if (typeof value === "string" && depth === 0) return value;
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "—";
+
+  const isArray = Array.isArray(value);
+  const entries = isArray
+    ? value.map((entry, index): [string, unknown] => [String(index), entry])
+    : Object.entries(value);
+  const opening = isArray ? "[" : "{";
+  const closing = isArray ? "]" : "}";
+  if (entries.length === 0) return opening + closing;
+
+  return <>
+    {opening}
+    {entries.map(([key, entry], index) => (
+      <Fragment key={key}>
+        {"\n" + "  ".repeat(depth + 1)}
+        {!isArray && `${JSON.stringify(key)}: `}
+        <span lang={key === "en" || key === "hi" ? key : undefined}>
+          {formatReviewValue(entry, depth + 1)}
+        </span>
+        {index < entries.length - 1 ? "," : ""}
+      </Fragment>
+    ))}
+    {"\n" + "  ".repeat(depth) + closing}
+  </>;
 }
 
 export function AdminImportReview({ importId }: { importId: string }) {
@@ -324,14 +365,14 @@ export function AdminImportReview({ importId }: { importId: string }) {
                     <span>{flag.resolved ? text.resolved : text.unresolved}</span>
                   </div>
                 </div>
-                <p lang="en">{flag.message}</p>
+                <p lang={locale}>{flagExplanations[locale][flag.code]}</p>
 
                 {flag.providerValues && (
                   <div className="admin-review-values">
                     {document.providers.map((provider, index) => (
                       <div key={provider}>
                         <strong>{providerLabel(provider)}</strong>
-                        <pre>{formatReviewValue(flag.providerValues?.[provider])}</pre>
+                        <pre lang={flag.path.endsWith(".hi") ? "hi" : "en"}>{formatReviewValue(flag.providerValues?.[provider])}</pre>
                         {!flag.resolved && flag.providerValues?.[provider] !== undefined && (
                           <Button
                             aria-label={locale === "hi" ? `${providerLabel(provider)} का मान चुनें` : `Use ${providerLabel(provider)} value`}

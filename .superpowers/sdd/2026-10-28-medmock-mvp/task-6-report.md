@@ -179,3 +179,212 @@ Inspected existing `.superpowers/validation/rls-smoke.sql`: it begins a transact
 - `.superpowers/sdd/2026-10-28-medmock-mvp/progress.md`
 - `.superpowers/sdd/2026-10-28-medmock-mvp/task-6-report.md`
 - `.superpowers/validation/read-only-check.mjs`
+
+## Spec review follow-up — loaded review language/accessibility
+
+The single remaining spec-review locale finding is fixed. Human explanations
+are selected from an exhaustive English/Hindi map keyed by the five stable
+ReviewFlag codes, with the paragraph language matching the selected UI locale.
+Raw English server diagnostic messages are no longer used as explanatory UI.
+
+Comparison text is annotated independently from the UI locale: scalar `.en`
+and `.hi` fields have the appropriate `pre.lang`; structured JSON retains
+its formatting while nested `en`/`hi` values receive individual language
+spans, including bilingual solution/option structures. The underlying provider
+values and review decision/publication behavior are unchanged.
+
+Loaded-review regressions exercise English and Hindi UI states, all five flag
+explanations, comparisons in the opposite language, and bilingual structured
+values. No Next API or route convention changed; this is a feature-local React
+rendering change. No subagents or external writes were used; AGENTS.md was not
+touched.
+
+### Observed RED
+
+Command (DEBUG_PRINT_LIMIT only suppresses diagnostic DOM dumps):
+
+```sh
+env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/features/imports/admin-import-review.test.tsx -t 'loaded-review'
+```
+
+Exit 1. Exact console output:
+
+```text
+> medmock@0.1.0 test
+> vitest run src/features/imports/admin-import-review.test.tsx -t loaded-review
+
+
+ RUN  v5.0.5 /data/data/com.termux/files/home/projects/neet
+
+ ❯ src/features/imports/admin-import-review.test.tsx (10 tests | 4 failed | 6 skipped) 2783ms
+   ❯ AdminImportReview (10)
+     × annotates loaded-review comparisons independently of the en UI language 498ms
+     × annotates loaded-review comparisons independently of the hi UI language 153ms
+     × localizes loaded-review explanations in en and retains each comparison field language 1052ms
+     × localizes loaded-review explanations in hi and retains each comparison field language 1061ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/features/imports/admin-import-review.test.tsx > AdminImportReview > annotates loaded-review comparisons independently of the en UI language
+Error: expect(element).toHaveAttribute("lang", "hi") // element.getAttribute("lang") === "hi"
+
+Expected the element to have attribute:
+  lang="hi"
+Received:
+  null
+ ❯ src/features/imports/admin-import-review.test.tsx:56:77
+     54|     });
+     55|     const oppositeLanguageValue = locale === "en" ? "OpenAI का हिंदी प…
+     56|     expect((await screen.findByText(oppositeLanguageValue)).closest("p…
+       |                                                                             ^
+     57|     expect(screen.getByText('"English solution draft"')).toHaveAttribu…
+     58|     expect(screen.getByText('"हिंदी समाधान प्रारूप"')).toHaveAttribute…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/features/imports/admin-import-review.test.tsx > AdminImportReview > annotates loaded-review comparisons independently of the hi UI language
+Error: expect(element).toHaveAttribute("lang", "en") // element.getAttribute("lang") === "en"
+
+Expected the element to have attribute:
+  lang="en"
+Received:
+  null
+ ❯ src/features/imports/admin-import-review.test.tsx:56:77
+     54|     });
+     55|     const oppositeLanguageValue = locale === "en" ? "OpenAI का हिंदी प…
+     56|     expect((await screen.findByText(oppositeLanguageValue)).closest("p…
+       |                                                                             ^
+     57|     expect(screen.getByText('"English solution draft"')).toHaveAttribu…
+     58|     expect(screen.getByText('"हिंदी समाधान प्रारूप"')).toHaveAttribute…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/features/imports/admin-import-review.test.tsx > AdminImportReview > localizes loaded-review explanations in en and retains each comparison field language
+TestingLibraryElementError: Unable to find an element with the text: An admin must review and approve every extracted question.. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+...
+
+Ignored nodes: comments, script, style
+...
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/features/imports/admin-import-review.test.tsx:103:44
+    101|
+    102|     for (const explanation of explanations) {
+    103|       for (const paragraph of await screen.findAllByText(explanation))…
+       |                                            ^
+    104|         expect(paragraph).toHaveAttribute("lang", locale);
+    105|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/features/imports/admin-import-review.test.tsx > AdminImportReview > localizes loaded-review explanations in hi and retains each comparison field language
+TestingLibraryElementError: Unable to find an element with the text: एडमिन को हर निकाले गए प्रश्न की समीक्षा और स्वीकृति देनी होगी।. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+...
+
+Ignored nodes: comments, script, style
+...
+ ❯ waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ src/features/imports/admin-import-review.test.tsx:103:44
+    101|
+    102|     for (const explanation of explanations) {
+    103|       for (const paragraph of await screen.findAllByText(explanation))…
+       |                                            ^
+    104|         expect(paragraph).toHaveAttribute("lang", locale);
+    105|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 6 skipped (10)
+   Start at  10:17:38
+   Duration  24.30s (environment 55%, import 21%, tests 13%, setup 5%, transform 4%, worker 2%)
+```
+
+### Focused GREEN
+
+```sh
+env -u LD_LIBRARY_PATH npm test -- src/features/imports/admin-import-review.test.tsx src/features/localization/locale-provider.test.tsx
+```
+
+Exit 0. Exact console output:
+
+```text
+> medmock@0.1.0 test
+> vitest run src/features/imports/admin-import-review.test.tsx src/features/localization/locale-provider.test.tsx
+
+
+ RUN  v5.0.5 /data/data/com.termux/files/home/projects/neet
+
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  10:19:48
+   Duration  45.02s (tests 50%, environment 25%, import 18%, transform 3%, setup 3%)
+
+Environment  jsdom was created 2 times · 10.27s total, 25% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+```
+
+### Additional verification
+
+```sh
+env -u LD_LIBRARY_PATH npm run typecheck
+```
+
+Exit 0. Exact console output:
+
+```text
+> medmock@0.1.0 typecheck
+> tsc --noEmit
+```
+
+```sh
+env -u LD_LIBRARY_PATH npm run lint
+```
+
+Exit 0. Exact console output:
+
+```text
+> medmock@0.1.0 lint
+> eslint .
+```
+
+Full-suite GREEN:
+
+```sh
+env -u LD_LIBRARY_PATH npm test
+```
+
+Exit 0. Exact final output:
+
+```text
+Test Files  29 passed (29)
+      Tests  139 passed (139)
+   Start at  10:21:18
+   Duration  316.20s (environment 64%, import 14%, tests 13%, setup 7%, worker 1%, transform 1%)
+
+Environment  jsdom was created 29 times · 167.40s total, 64% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+```
+
+The earlier full-project build/browser evidence above belongs to the base
+commit and is not claimed as a fresh build or browser execution for this
+targeted UI follow-up.
+
+Self-review: the code-keyed explanation map is checked against every supported
+flag code; comparison rendering escapes text through React and leaves provider
+values untouched. Decision persistence and explicit publication approval remain
+covered by the focused suite. Existing Task 6 external/browser blockers remain
+unchanged; Task 6 is not marked complete.
+
+Files changed in this follow-up: `src/features/imports/admin-import-review.tsx`,
+`src/features/imports/admin-import-review.test.tsx`, this report, and the
+progress ledger. Commit subject: `fix: localize loaded import review explanations`.

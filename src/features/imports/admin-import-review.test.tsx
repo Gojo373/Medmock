@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminImportReview } from "@/features/imports/admin-import-review";
+import { LocaleProvider } from "@/features/localization/locale-provider";
 
 const reviewDocument = {
   schemaVersion: 1,
@@ -35,6 +36,82 @@ const reviewDocument = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportReview", () => {
+  it.each(["en", "hi"] as const)("annotates loaded-review comparisons independently of the %s UI language", async (locale) => {
+    const conflict = reviewDocument.reviewFlags[0];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({
+      document: {
+        ...reviewDocument,
+        reviewFlags: [
+          conflict,
+          { ...conflict, id: "provider_conflict:questions.1.stem.hi", path: "questions.1.stem.hi", providerValues: { openai: "OpenAI का हिंदी पाठ", gemini: "Gemini का हिंदी पाठ" } },
+          { ...conflict, id: "provider_conflict:questions.1.solution", path: "questions.1.solution", providerValues: { openai: { en: "English solution draft", hi: "हिंदी समाधान प्रारूप" } } },
+        ],
+      },
+      canPublish: false,
+    })));
+    render(<AdminImportReview importId="comparison-locale-review" />, {
+      wrapper: ({ children }) => <LocaleProvider initialLocale={locale}>{children}</LocaleProvider>,
+    });
+    const oppositeLanguageValue = locale === "en" ? "OpenAI का हिंदी पाठ" : "OpenAI wording";
+    expect((await screen.findByText(oppositeLanguageValue)).closest("pre")).toHaveAttribute("lang", locale === "en" ? "hi" : "en");
+    expect(screen.getByText('"English solution draft"')).toHaveAttribute("lang", "en");
+    expect(screen.getByText('"हिंदी समाधान प्रारूप"')).toHaveAttribute("lang", "hi");
+  });
+
+  it.each([
+    {
+      locale: "en" as const,
+      explanations: [
+        "An admin must review and approve every extracted question.",
+        "Providers disagree on this field; choose the reviewed value.",
+        "This extracted field needs a human confidence check.",
+        "Required reviewed content is missing or invalid.",
+        "The answer key references a missing or invalid option; check the reviewed answer.",
+      ],
+    },
+    {
+      locale: "hi" as const,
+      explanations: [
+        "एडमिन को हर निकाले गए प्रश्न की समीक्षा और स्वीकृति देनी होगी।",
+        "इस फ़ील्ड पर प्रदाताओं में मतभेद है। समीक्षित मान चुनें।",
+        "निकाले गए इस फ़ील्ड के विश्वास स्तर की मानव जाँच आवश्यक है।",
+        "आवश्यक समीक्षित सामग्री अनुपलब्ध या अमान्य है।",
+        "उत्तर कुंजी में अनुपलब्ध या अमान्य विकल्प है। समीक्षित उत्तर की जाँच करें।",
+      ],
+    },
+  ])("localizes loaded-review explanations in $locale and retains each comparison field language", async ({ locale, explanations }) => {
+    const conflict = reviewDocument.reviewFlags[0];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({
+      document: {
+        ...reviewDocument,
+        reviewFlags: [
+          conflict,
+          { ...conflict, id: "provider_conflict:questions.1.stem.hi", path: "questions.1.stem.hi", providerValues: { openai: "OpenAI का हिंदी पाठ", gemini: "Gemini का हिंदी पाठ" } },
+          { ...conflict, id: "provider_conflict:questions.1.solution", path: "questions.1.solution", providerValues: { openai: { en: "English solution draft", hi: "हिंदी समाधान प्रारूप" } } },
+          ...(["admin_review", "low_confidence", "missing_field", "invalid_answer_key"] as const).map((code) => ({
+            id: `${code}:questions.1`, code, path: "questions.1", message: "Required reviewed content is missing or invalid.", severity: "error", resolved: false,
+          })),
+        ],
+      },
+      canPublish: false,
+    })));
+    render(<AdminImportReview importId="loaded-locale-review" />, {
+      wrapper: ({ children }) => <LocaleProvider initialLocale={locale}>{children}</LocaleProvider>,
+    });
+
+    for (const explanation of explanations) {
+      for (const paragraph of await screen.findAllByText(explanation)) {
+        expect(paragraph).toHaveAttribute("lang", locale);
+      }
+    }
+    expect(screen.getByText("OpenAI wording").closest("pre")).toHaveAttribute("lang", "en");
+    expect(screen.getByText("Gemini wording").closest("pre")).toHaveAttribute("lang", "en");
+    expect(screen.getByText("OpenAI का हिंदी पाठ").closest("pre")).toHaveAttribute("lang", "hi");
+    expect(screen.getByText("Gemini का हिंदी पाठ").closest("pre")).toHaveAttribute("lang", "hi");
+    expect(screen.getByText('"English solution draft"')).toHaveAttribute("lang", "en");
+    expect(screen.getByText('"हिंदी समाधान प्रारूप"')).toHaveAttribute("lang", "hi");
+  });
+
   it("provides a return link to the import workspace while review loads", () => {
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
     render(<AdminImportReview importId="pending-import" />);
