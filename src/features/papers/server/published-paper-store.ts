@@ -2,6 +2,7 @@ import "server-only";
 
 import { PaperVersionSchema, type PaperVersion } from "@/features/exam/domain";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
+import { isPaperBilingual } from "@/features/localization/localized-content";
 import {
   samplePapers,
   type PaperSummary,
@@ -60,6 +61,7 @@ export function buildPublishedPaperLibrary(
       versionId: paper.id,
       pattern: paper.pattern,
       title: paper.title,
+      isBilingual: isPaperBilingual(paper),
       publishedAt,
       questions: paper.questions.length,
       minutes: paper.durationMinutes,

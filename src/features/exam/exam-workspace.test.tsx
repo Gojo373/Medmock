@@ -48,6 +48,18 @@ function fixture(): PaperVersion {
   });
 }
 
+function englishOnlyFixture(): PaperVersion {
+  const paper = structuredClone(fixture());
+  delete paper.title.hi;
+  for (const section of paper.sections) delete section.title.hi;
+  for (const question of paper.questions) {
+    delete question.stem.hi;
+    if (question.solution) delete question.solution.hi;
+    for (const option of question.options) delete option.text.hi;
+  }
+  return PaperVersionSchema.parse(paper);
+}
+
 describe("ExamWorkspace", () => {
   it("conceals correctness while a mock attempt is active", async () => {
     const user = userEvent.setup();
@@ -108,6 +120,17 @@ describe("ExamWorkspace", () => {
       screen.getByRole("heading", { name: "यह प्रयास जमा करें?" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "जमा करने की पुष्टि करें" })).toBeInTheDocument();
+  });
+
+  it("falls back to English question content under Hindi controls", async () => {
+    const user = userEvent.setup();
+    render(<ExamWorkspace mode="practice" paper={englishOnlyFixture()} userId="student-ui" />);
+
+    await user.click(screen.getByRole("button", { name: "Switch question language" }));
+
+    expect(screen.getByText("समय शेष")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What is force?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "A. Mass times acceleration" })).toBeInTheDocument();
   });
 
   it("traps dialog focus, makes the background inert, closes on Escape, and restores focus", async () => {

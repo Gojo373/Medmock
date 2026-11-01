@@ -1,6 +1,6 @@
 # MedMock Product Specification
 
-MedMock is a production-ready NEET paper-to-CBT platform. A single admin uploads question papers, answer keys, and optional solution files as PDF/JPG/PNG, chooses OpenAI, Gemini, or both, reviews the structured extraction, and publishes immutable original-pattern and current-pattern test versions.
+MedMock is a production-ready NEET paper-to-CBT platform. A single admin uploads question papers, answer keys, and optional solution files as PDF/JPG/PNG, chooses OpenAI, Gemini, or both, reviews the structured extraction, and publishes immutable original-pattern and current-pattern test versions. English paper content is required; Hindi paper content is optional and remains reviewable when present.
 
 Students sign in with Google or email OTP, use a fully English/Hindi responsive interface, take strict mock tests or immediate-feedback practice sessions, and receive reviewed solutions, personal analytics, a provisional live leaderboard, and percentile after 100 eligible first attempts.
 
@@ -14,7 +14,7 @@ Core constraints:
 - Single admin role for the first release.
 - Imports never auto-publish.
 - Official answer keys override model suggestions.
-- Missing translations and solutions may be AI drafted but must be reviewed.
+- Missing English content and solutions may be AI drafted but must be reviewed. Hindi paper translations are optional; Hindi application UI falls back field-by-field to reviewed English paper content when a translation is absent.
 - Mock mode is timed, cannot pause, hides answers, and auto-submits.
 - Practice mode locks the first choice and reveals the reviewed answer immediately.
 - Attempts autosave locally, resynchronize after temporary disconnection, and use a server-authoritative deadline.

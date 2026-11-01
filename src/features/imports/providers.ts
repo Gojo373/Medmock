@@ -11,7 +11,7 @@ import {
 } from "@/features/imports/schema";
 
 const extractionPrompt =
-  "Extract every NEET question, bilingual text, options, reviewed answer candidates, solution, topic, section, and field confidence. Return officialAnswerKeyEntries only for answers explicitly present in the attached answer-key file; never infer official provenance from the paper or solution booklet. Preserve missing values for admin review and never invent publication approval.";
+  "Extract every NEET question with complete English text, options, reviewed answer candidates, solution, topic, section, and field confidence. Extract Hindi text when it is present in the source, but do not invent Hindi solely to satisfy publication. Return officialAnswerKeyEntries only for answers explicitly present in the attached answer-key file; never infer official provenance from the paper or solution booklet. Preserve other missing values for admin review and never invent publication approval.";
 
 export interface ExtractionProvider {
   id: ExtractionProviderId;

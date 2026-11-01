@@ -5,9 +5,10 @@ import Link from "next/link";
 import { BrandMark } from "@/components/brand/brand-mark";
 import { Button } from "@/components/ui/button";
 import type { PaperVersion } from "@/features/exam/domain";
+import { localizedContent } from "@/features/localization/localized-content";
 import { useLocale } from "@/features/localization/locale-provider";
 
-type PaperDetailSummary = Pick<PaperVersion, "id" | "paperId" | "title" | "durationMinutes"> & { questionCount: number };
+type PaperDetailSummary = Pick<PaperVersion, "id" | "paperId" | "title" | "durationMinutes"> & { questionCount: number; isBilingual: boolean };
 
 export function PublishedPaperDetails({ paper }: { paper: PaperDetailSummary }) {
   const { locale, toggleLocale, copy } = useLocale();
@@ -18,11 +19,11 @@ export function PublishedPaperDetails({ paper }: { paper: PaperDetailSummary }) 
       <Button onClick={toggleLocale} tone="ghost">{copy.languageSwitch}</Button>
       <section className="status-card">
         <p className="eyebrow">{locale === "hi" ? "समीक्षित पेपर" : "Reviewed paper"}</p>
-        <h1>{paper.title[locale]}</h1>
+        <h1>{localizedContent(paper.title, locale)}</h1>
         <p>
           <Clock3 aria-hidden="true" size={16} /> {paper.durationMinutes} {locale === "hi" ? "मिनट" : "minutes"} ·{" "}
           <BookOpenCheck aria-hidden="true" size={16} /> {paper.questionCount} {locale === "hi" ? "प्रश्न" : "questions"} ·{" "}
-          <Languages aria-hidden="true" size={16} /> {copy.library.bilingual}
+          <Languages aria-hidden="true" size={16} /> {paper.isBilingual ? copy.library.bilingual : copy.library.englishOnly}
         </p>
         <div>
           <Link className="button button--primary" href={`/papers/${paper.paperId}/mock${versionQuery}`}>

@@ -15,6 +15,7 @@ import {
 } from "@/features/imports/providers";
 import {
   buildPaperVersionFromImport,
+  normalizeOptionalHindiReviewFlags,
   reconcileExtractions,
   validateImportForPublish,
 } from "@/features/imports/reconciliation";
@@ -88,14 +89,60 @@ describe("provider selection and adapters", () => {
     expect(reviewed.reviewFlags.find((flag) => flag.code === "admin_review")?.resolved).toBe(false);
     expect(reviewed.reviewFlags.find((flag) => flag.id === "title-choice")?.resolved).toBe(true);
   });
-  it.each([null, { en: "Physics", hi: null }])("normalizes absent section translations into blocking review flags: %j", (title) => {
+  it("allows an absent section translation without blocking publication", () => {
     const raw = payload();
+    const title = { en: "Physics", hi: null };
     const normalized = normalizeProviderExtractionPayload({ ...raw, paper: { ...raw.paper, sections: [{ id: "physics", subject: "physics", title, questionNumbers: ["1"], selectionLimit: null }] } });
     const extracted = document("openai", normalized as ExtractionPayload);
     const draft = reconcileExtractions([extracted]);
-    expect(draft.reviewFlags).toEqual(expect.arrayContaining([expect.objectContaining({ code: "missing_field", path: "paper.sections.physics.title.hi" })]));
+    expect(draft.reviewFlags).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "missing_field", path: "paper.sections.physics.title.hi" })]));
     draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
-    expect(validateImportForPublish(draft).canPublish).toBe(false);
+    expect(validateImportForPublish(draft).canPublish).toBe(true);
+  });
+
+  it("allows complete English-only paper content and omits synthetic Hindi", () => {
+    const raw = payload();
+    raw.paper.title = { en: "NEET 2025" };
+    raw.paper.sections = [{ id: "physics", subject: "physics", title: { en: "Physics" }, questionNumbers: ["1"] }];
+    raw.paper.questions[0].stem = { en: "What is force?" };
+    raw.paper.questions[0].options = [
+      { id: "A", text: { en: "Mass times acceleration" } },
+      { id: "B", text: { en: "Mass divided by acceleration" } },
+    ];
+    raw.paper.questions[0].solution = { en: "Use Newton's second law." };
+    delete raw.paper.questions[0].confidence.translation;
+
+    const draft = reconcileExtractions([document("openai", raw)]);
+    expect(draft.reviewFlags.some((flag) => flag.path.endsWith(".hi"))).toBe(false);
+    expect(draft.reviewFlags.some((flag) => flag.path.endsWith("confidence.translation"))).toBe(false);
+    draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
+    expect(validateImportForPublish(draft).canPublish).toBe(true);
+
+    const version = buildPaperVersionFromImport(draft, {
+      id: "neet-2025-original-r1",
+      paperId: "neet-2025",
+      revision: 1,
+      publishedAt: "2026-11-01T00:00:00.000Z",
+    });
+    expect(version.title).toEqual({ en: "NEET 2025" });
+    expect(version.questions[0].options[0].text).toEqual({ en: "Mass times acceleration" });
+  });
+
+  it("removes legacy Hindi-missing flags without changing other decisions", () => {
+    const draft = reconcileExtractions([document("openai")]);
+    draft.reviewFlags.push({
+      id: "missing_field:questions.1.options.A.text.hi",
+      code: "missing_field",
+      path: "questions.1.options.A.text.hi",
+      message: "Required reviewed content is missing or invalid.",
+      severity: "error",
+      resolved: false,
+    });
+
+    const normalized = normalizeOptionalHindiReviewFlags(draft);
+
+    expect(normalized.reviewFlags.some((flag) => flag.path.endsWith(".hi"))).toBe(false);
+    expect(normalized.reviewFlags.some((flag) => flag.code === "admin_review")).toBe(true);
   });
 
   it("blocks structurally invalid section membership and limits before publication", () => {
@@ -474,7 +521,7 @@ describe("review and publish policy", () => {
   it("blocks publishing while required content or review flags remain unresolved", () => {
     const incompletePayload = payload();
     incompletePayload.paper.questions[0].solution = {
-      en: "Use Newton's second law.",
+      hi: "न्यूटन के दूसरे नियम का उपयोग करें।",
     };
     const draft = reconcileExtractions([document("openai", incompletePayload)]);
 
@@ -536,9 +583,15 @@ describe("review and publish policy", () => {
       en: "Mass times acceleration",
     };
     const draft = reconcileExtractions([document("openai", incompletePayload)]);
-    const flag = draft.reviewFlags.find(
-      (item) => item.path === "questions.1.options.A.text.hi",
-    )!;
+    const flag = {
+      id: "provider_conflict:questions.1.options.A.text.hi",
+      code: "provider_conflict" as const,
+      path: "questions.1.options.A.text.hi",
+      message: "Review optional Hindi text.",
+      severity: "warning" as const,
+      resolved: false,
+    };
+    draft.reviewFlags.push(flag);
 
     const reviewed = reconciliationModule.applyReviewDecisions(draft, [
       {

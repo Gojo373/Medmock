@@ -59,7 +59,29 @@ describe("published paper student routes", () => {
       title: publishedPaper.title,
       durationMinutes: publishedPaper.durationMinutes,
       questionCount: publishedPaper.questions.length,
+      isBilingual: true,
     });
+  });
+
+  it("falls back to English on an English-only paper detail", async () => {
+    const englishOnly = structuredClone(publishedPaper);
+    delete (englishOnly.title as { hi?: string }).hi;
+    for (const section of englishOnly.sections) delete (section.title as { hi?: string }).hi;
+    for (const question of englishOnly.questions) {
+      delete (question.stem as { hi?: string }).hi;
+      if (question.solution) delete (question.solution as { hi?: string }).hi;
+      for (const option of question.options) delete (option.text as { hi?: string }).hi;
+    }
+    routeState.loadPublishedPaperVersion.mockResolvedValue(englishOnly);
+
+    const detail = await PaperDetailsPage({
+      params: Promise.resolve({ paperId: englishOnly.paperId }),
+      searchParams: Promise.resolve({ version: englishOnly.id }),
+    });
+    render(<LocaleProvider initialLocale="hi">{detail}</LocaleProvider>);
+
+    expect(screen.getByRole("heading", { name: englishOnly.title.en })).toBeInTheDocument();
+    expect(screen.getByText(/अंग्रेज़ी पेपर/)).toBeInTheDocument();
   });
 
   it("uses the shared Hindi locale on the selected paper detail", async () => {

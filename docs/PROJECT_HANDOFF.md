@@ -2,6 +2,38 @@
 
 Last updated: 2026-11-01
 
+## Latest checkpoint — English-only reviewed papers
+
+This section supersedes older bilingual-content requirements while preserving
+the existing Task 6 external blockers.
+
+- The user explicitly authorized English-only paper publication. Application
+  controls remain English/Hindi, but published paper content now requires
+  English and treats Hindi as optional.
+- `LocalizedTextSchema` accepts optional Hindi, and one shared fallback helper
+  prevents blank titles, sections, stems, options, solutions, accessible names,
+  history labels, or analytics when Hindi UI displays an English-only paper.
+- Library and detail metadata says English paper unless every localized field
+  has Hindi; complete bilingual papers retain their existing behavior.
+- Import reconciliation no longer creates missing-Hindi flags. Existing stored
+  reviews prune obsolete `.hi` missing-field flags plus translation-confidence
+  flags for questions with no Hindi, so import
+  `cd7a6ebe-9a37-439e-b345-c5a2dde0ca50` does not need re-uploading.
+- English completeness, answer keys, structure, confidence for present content,
+  explicit admin review, and immutable publication remain mandatory.
+- RED→GREEN and final evidence: 35 files / 184 tests passed in 422.56s; lint and
+  type-check exited 0; the Next 16.4.3 production build exited 0, generated
+  14/14 pages, and compiled every dynamic route plus Proxy.
+- Self-review added an idempotent pre-publication save for normalized legacy
+  flags, ensuring the Supabase publication RPC receives the same clean reviewed
+  JSON that application validation approved.
+- After deployment, hard-refresh the existing import review, resolve its
+  remaining non-Hindi flags, approve, and publish. No database migration is
+  required because paper versions are validated JSON.
+
+Task 6 remains incomplete for the already-recorded Linux Playwright/axe,
+deployed auth/cron/signed-upload, external migration, provider, and load gates.
+
 ## Latest checkpoint — final whole-branch fix wave
 
 This section supersedes every historical checkpoint below. Branch:

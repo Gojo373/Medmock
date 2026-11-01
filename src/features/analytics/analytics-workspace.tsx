@@ -20,6 +20,7 @@ import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/features/localization/locale-provider";
+import { localizedContent } from "@/features/localization/localized-content";
 import {
   buildPerformanceAnalytics,
   type LeaderboardSnapshot,
@@ -297,7 +298,7 @@ export function AnalyticsShell({
       <div className="analytics-page">
         <section className="analytics-hero" id="analysis">
           <div>
-            <p className="eyebrow">{currentAttempt.paper.title[locale]}</p>
+            <p className="eyebrow">{localizedContent(currentAttempt.paper.title, locale)}</p>
             <h1>{text.analysis}</h1>
             <p>
               {new Date(currentAttempt.attempt.submittedAt ?? currentAttempt.attempt.startedAt)
@@ -425,12 +426,12 @@ export function AnalyticsShell({
                   </div>
                   <section>
                     <span>Q{index + 1} · {question.topic}</span>
-                    <h3>{question.stem[locale]}</h3>
+                    <h3>{localizedContent(question.stem, locale)}</h3>
                     <p>
                       {text.yourAnswer}: {answer?.selectedOptionId ?? text.unanswered}
                       <b>{text.correctAnswer}: {question.acceptedOptionIds.join(", ")}</b>
                     </p>
-                    {question.solution && <small>{question.solution[locale]}</small>}
+                    {question.solution && <small>{localizedContent(question.solution, locale)}</small>}
                   </section>
                 </article>
               );
@@ -447,12 +448,12 @@ export function AnalyticsShell({
             {history.map((item) => (
               <article key={item.attempt.id}>
                 <div>
-                  <strong>{item.paper.title[locale]}</strong>
+                  <strong>{localizedContent(item.paper.title, locale)}</strong>
                   <span>{new Date(item.attempt.submittedAt ?? item.attempt.startedAt).toLocaleString(locale === "en" ? "en-IN" : "hi-IN")}</span>
                 </div>
                 <span>{item.result.score} / {item.result.maxScore}</span>
                 <span><ShieldCheck aria-hidden="true" /> {text.reviewed}</span>
-                <Button aria-controls="analysis" aria-label={`${locale === "hi" ? "विश्लेषण देखें" : "View analysis"}: ${item.paper.title[locale]} · ${new Date(item.attempt.submittedAt ?? item.attempt.startedAt).toLocaleString(locale === "hi" ? "hi-IN" : "en-IN")}`} aria-pressed={item.attempt.id === currentAttempt.attempt.id} onClick={() => setSelectedAttemptId(item.attempt.id)} tone="ghost">
+                <Button aria-controls="analysis" aria-label={`${locale === "hi" ? "विश्लेषण देखें" : "View analysis"}: ${localizedContent(item.paper.title, locale)} · ${new Date(item.attempt.submittedAt ?? item.attempt.startedAt).toLocaleString(locale === "hi" ? "hi-IN" : "en-IN")}`} aria-pressed={item.attempt.id === currentAttempt.attempt.id} onClick={() => setSelectedAttemptId(item.attempt.id)} tone="ghost">
                   {locale === "hi" ? "विश्लेषण देखें" : "View analysis"}
                 </Button>
               </article>

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { PublishedPaperDetails } from "@/features/papers/published-paper-details";
 import { loadPublishedPaperVersion } from "@/features/papers/server/published-paper-store";
+import { isPaperBilingual } from "@/features/localization/localized-content";
 
 export default async function PaperDetailsPage({
   params,
@@ -21,5 +22,6 @@ export default async function PaperDetailsPage({
     title: paper.title,
     durationMinutes: paper.durationMinutes,
     questionCount: paper.questions.length,
+    isBilingual: isPaperBilingual(paper),
   }} />;
 }

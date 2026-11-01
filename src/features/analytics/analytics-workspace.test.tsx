@@ -9,7 +9,7 @@ import {
 } from "@/features/analytics/analytics-workspace";
 import * as analyticsWorkspace from "@/features/analytics/analytics-workspace";
 import { buildLeaderboard } from "@/features/analytics/analytics";
-import { AttemptSchema, type Attempt } from "@/features/exam/domain";
+import { AttemptSchema, type Attempt, type PaperVersion } from "@/features/exam/domain";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
 import { scoreAttempt } from "@/features/exam/scoring";
 
@@ -61,12 +61,24 @@ function attempt({
   });
 }
 
-function historyItem(currentAttempt: Attempt): AttemptHistoryItem {
+function historyItem(currentAttempt: Attempt, paper: PaperVersion = sampleExamPaper): AttemptHistoryItem {
   return {
-    paper: sampleExamPaper,
+    paper,
     attempt: currentAttempt,
-    result: scoreAttempt(sampleExamPaper, currentAttempt),
+    result: scoreAttempt(paper, currentAttempt),
   };
+}
+
+function englishOnlyPaper() {
+  const paper = structuredClone(sampleExamPaper);
+  delete paper.title.hi;
+  for (const section of paper.sections) delete section.title.hi;
+  for (const question of paper.questions) {
+    delete question.stem.hi;
+    if (question.solution) delete question.solution.hi;
+    for (const option of question.options) delete option.text.hi;
+  }
+  return paper;
 }
 
 function renderWorkspace(withEarlierAttempt = false) {
@@ -162,6 +174,26 @@ describe("AnalyticsShell", () => {
     expect(within(question).getByText("Your answer: A")).toBeInTheDocument();
     expect(within(question).getByText("Correct answer: B")).toBeInTheDocument();
     expect(within(question).getByText("Planck's relation is E = hν.")).toBeInTheDocument();
+  });
+
+  it("falls back to English paper content when analytics controls use Hindi", async () => {
+    const user = userEvent.setup();
+    const currentAttempt = attempt();
+    const paper = englishOnlyPaper();
+    render(
+      <AnalyticsShell
+        currentAttempt={historyItem(currentAttempt, paper)}
+        eligibleAttemptCount={0}
+        history={[historyItem(currentAttempt, paper)]}
+        leaderboard={buildLeaderboard([])}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch analytics language" }));
+
+    expect(screen.getAllByText(paper.title.en)).not.toHaveLength(0);
+    expect(screen.getByRole("heading", { name: paper.questions[0].stem.en })).toBeInTheDocument();
+    expect(screen.getByText(paper.questions[0].solution!.en)).toBeInTheDocument();
   });
 
   it("shows attempt history and updates the local leaderboard privacy control", async () => {

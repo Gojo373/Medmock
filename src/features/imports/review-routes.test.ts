@@ -100,6 +100,33 @@ describe("import review routes", () => {
     expect((await authorized.json()).document.reviewFlags).toHaveLength(1);
   });
 
+  it("removes obsolete Hindi-missing flags from an existing stored review", async () => {
+    const store = repository();
+    const record = await store.get(importId);
+    record!.reconciled.reviewFlags.push({
+      id: "missing_field:questions.1.options.A.text.hi",
+      code: "missing_field",
+      path: "questions.1.options.A.text.hi",
+      message: "Required reviewed content is missing or invalid.",
+      severity: "error",
+      resolved: false,
+    });
+    const handlers = createImportReviewHandlers(store);
+
+    const response = await handlers.GET(
+      new Request(`http://localhost/api/imports/${importId}/review`, {
+        headers: adminHeaders,
+      }),
+      { params: Promise.resolve({ importId }) },
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.document.reviewFlags).toHaveLength(1);
+    expect(payload.document.reviewFlags[0].code).toBe("admin_review");
+    expect(payload.canPublish).toBe(false);
+  });
+
   it("applies validated decisions before exposing publication readiness", async () => {
     const store = repository();
     const flagId = (await store.get(importId))!.reconciled.reviewFlags[0].id;

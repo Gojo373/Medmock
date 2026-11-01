@@ -53,6 +53,7 @@ export const messages = {
       questions: "questions",
       minutes: "minutes",
       bilingual: "English + Hindi",
+      englishOnly: "English paper",
       reviewed: "Admin reviewed",
     },
     footer: {
@@ -123,6 +124,7 @@ export const messages = {
       questions: "प्रश्न",
       minutes: "मिनट",
       bilingual: "अंग्रेज़ी + हिंदी",
+      englishOnly: "अंग्रेज़ी पेपर",
       reviewed: "एडमिन समीक्षित",
     },
     footer: {

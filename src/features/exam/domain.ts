@@ -5,7 +5,7 @@ export const SubjectSchema = z.enum(["physics", "chemistry", "biology"]);
 export const LocalizedTextSchema = z
   .object({
     en: z.string().trim().min(1),
-    hi: z.string().trim().min(1),
+    hi: z.string().trim().min(1).optional(),
   })
   .strict();
 

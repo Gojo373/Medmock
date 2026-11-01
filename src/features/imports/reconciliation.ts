@@ -73,7 +73,6 @@ function collectMissingPaths(paper: ExtractionPaper) {
   const paths: string[] = [];
 
   if (!paper.title?.en) paths.push("paper.title.en");
-  if (!paper.title?.hi) paths.push("paper.title.hi");
   if (!paper.year) paths.push("paper.year");
   if (!paper.durationMinutes) paths.push("paper.durationMinutes");
   if (paper.questions.length === 0) paths.push("paper.questions");
@@ -85,7 +84,6 @@ function collectMissingPaths(paper: ExtractionPaper) {
   for (const section of paper.sections) {
     const base = `paper.sections.${section.id}`;
     if (!section.title?.en) paths.push(`${base}.title.en`);
-    if (!section.title?.hi) paths.push(`${base}.title.hi`);
     if (!section.questionNumbers.length || new Set(section.questionNumbers).size !== section.questionNumbers.length ||
       section.questionNumbers.some((number) => !paper.questions.some((question) => question.sourceNumber === number && question.sectionId === section.id && question.subject === section.subject))) {
       paths.push(`${base}.questionNumbers`);
@@ -101,12 +99,10 @@ function collectMissingPaths(paper: ExtractionPaper) {
     if (!question.subject) paths.push(base + ".subject");
     if (!question.topic) paths.push(base + ".topic");
     if (!question.stem?.en) paths.push(base + ".stem.en");
-    if (!question.stem?.hi) paths.push(base + ".stem.hi");
     if (question.options.length < 2) paths.push(base + ".options");
 
     for (const option of question.options) {
       if (!option.text?.en) paths.push(base + ".options." + option.id + ".text.en");
-      if (!option.text?.hi) paths.push(base + ".options." + option.id + ".text.hi");
     }
 
     if (question.acceptedOptionIds.length === 0) {
@@ -119,10 +115,37 @@ function collectMissingPaths(paper: ExtractionPaper) {
     }
 
     if (!question.solution?.en) paths.push(base + ".solution.en");
-    if (!question.solution?.hi) paths.push(base + ".solution.hi");
   }
 
   return paths;
+}
+
+function questionHasHindi(question: ExtractionQuestion) {
+  return Boolean(
+    question.stem?.hi ||
+    question.solution?.hi ||
+    question.options.some((option) => option.text?.hi),
+  );
+}
+
+export function normalizeOptionalHindiReviewFlags(
+  draftInput: ReconciledImport,
+): ReconciledImport {
+  const draft = structuredClone(draftInput);
+  draft.reviewFlags = draft.reviewFlags.filter((flag) => {
+    if (flag.code === "missing_field" && flag.path.endsWith(".hi")) {
+      return false;
+    }
+    const translationMatch = /^questions\.([^.]+)\.confidence\.translation$/.exec(flag.path);
+    if (flag.code === "low_confidence" && translationMatch) {
+      const question = draft.paper.questions.find(
+        (item) => item.sourceNumber === translationMatch[1],
+      );
+      return question ? questionHasHindi(question) : true;
+    }
+    return true;
+  });
+  return ReconciledImportSchema.parse(draft);
 }
 
 function addContentReviewFlags(paper: ExtractionPaper, flags: ReviewFlag[]) {
@@ -140,6 +163,7 @@ function addContentReviewFlags(paper: ExtractionPaper, flags: ReviewFlag[]) {
 
   for (const question of paper.questions) {
     for (const field of confidenceFields) {
+      if (field === "translation" && !questionHasHindi(question)) continue;
       const confidence = question.confidence[field];
       if (confidence === undefined || confidence < confidenceThreshold) {
         addFlag(
@@ -360,7 +384,8 @@ export function validateImportForPublish(draft: ReconciledImport): {
 } {
   const issues: PublishIssue[] = [];
   const missingPaths = collectMissingPaths(draft.paper);
-  const unresolvedPaths = draft.reviewFlags
+  const normalized = normalizeOptionalHindiReviewFlags(draft);
+  const unresolvedPaths = normalized.reviewFlags
     .filter((flag) => !flag.resolved)
     .map((flag) => flag.path);
 
@@ -423,7 +448,7 @@ export function applyReviewEdits(
   draftInput: ReconciledImport,
   edits: ReviewFieldEdit[],
 ) {
-  const draft = structuredClone(draftInput);
+  const draft = normalizeOptionalHindiReviewFlags(draftInput);
 
   for (const edit of edits) {
     if (edit.path === "paper") {
@@ -508,7 +533,7 @@ export function applyReviewDecisions(
   draftInput: ReconciledImport,
   decisions: ReviewDecision[],
 ) {
-  const draft = structuredClone(draftInput);
+  const draft = normalizeOptionalHindiReviewFlags(draftInput);
 
   for (const decision of decisions) {
     const previousPaper = structuredClone(draft.paper);
@@ -597,19 +622,19 @@ export function buildPaperVersionFromImport(
     topic: question.topic!,
     stem: {
       en: question.stem!.en!,
-      hi: question.stem!.hi!,
+      ...(question.stem?.hi ? { hi: question.stem.hi } : {}),
     },
     options: question.options.map((option) => ({
       id: option.id,
       text: {
         en: option.text!.en!,
-        hi: option.text!.hi!,
+        ...(option.text?.hi ? { hi: option.text.hi } : {}),
       },
     })),
     acceptedOptionIds: question.acceptedOptionIds,
     solution: {
       en: question.solution!.en!,
-      hi: question.solution!.hi!,
+      ...(question.solution?.hi ? { hi: question.solution.hi } : {}),
     },
     answerKeyProvenance: question.answerKeyProvenance,
     disposition: question.disposition,
@@ -621,7 +646,7 @@ export function buildPaperVersionFromImport(
         subject: section.subject,
         title: {
           en: section.title!.en!,
-          hi: section.title!.hi!,
+          ...(section.title?.hi ? { hi: section.title.hi } : {}),
         },
         questionIds: section.questionNumbers.map(
           (sourceNumber) => metadata.id + ":q:" + sourceNumber,
@@ -655,7 +680,7 @@ export function buildPaperVersionFromImport(
     status: "published",
     title: {
       en: draft.paper.title!.en!,
-      hi: draft.paper.title!.hi!,
+      ...(draft.paper.title?.hi ? { hi: draft.paper.title.hi } : {}),
     },
     durationMinutes: draft.paper.durationMinutes!,
     publishedAt: metadata.publishedAt,

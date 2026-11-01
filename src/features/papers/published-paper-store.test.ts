@@ -64,4 +64,27 @@ describe("published paper store", () => {
     ).toEqual(current);
     expect(selectPublishedPaperVersion(rows, "neet-reviewed")).toEqual(current);
   });
+
+  it("marks an English-only published paper without a bilingual claim", () => {
+    const englishOnly = structuredClone(
+      publishedVersion("neet-english-current-v1", "current", 1),
+    );
+    delete (englishOnly.title as { hi?: string }).hi;
+    for (const section of englishOnly.sections) delete (section.title as { hi?: string }).hi;
+    for (const question of englishOnly.questions) {
+      delete (question.stem as { hi?: string }).hi;
+      if (question.solution) delete (question.solution as { hi?: string }).hi;
+      for (const option of question.options) delete (option.text as { hi?: string }).hi;
+    }
+
+    expect(buildPublishedPaperLibrary([{
+      id: englishOnly.id,
+      paper_id: englishOnly.paperId,
+      status: "published",
+      content: englishOnly,
+      published_at: "2026-11-01T00:00:00+00:00",
+    }])).toEqual([
+      expect.objectContaining({ isBilingual: false }),
+    ]);
+  });
 });

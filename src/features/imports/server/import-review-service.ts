@@ -4,6 +4,7 @@ import {
   applyReviewDecisions,
   applyReviewEdits,
   buildPublishedPaperVersionsFromImport,
+  normalizeOptionalHindiReviewFlags,
   type ReviewDecision,
   type ReviewFieldEdit,
   validateImportForPublish,
@@ -85,14 +86,18 @@ export async function publishReviewedImport(
     }
     throw new Error("Import was already published with different versions.");
   }
-  if (record.status !== "ready_to_publish" || !record.reviewed) {
+  if (!record.reviewed) {
     throw new Error("Import is not ready to publish.");
   }
 
-  const validation = validateImportForPublish(record.reviewed);
+  const reviewed = normalizeOptionalHindiReviewFlags(record.reviewed);
+  const validation = validateImportForPublish(reviewed);
   if (!validation.canPublish) throw new Error("Import is not ready to publish.");
+  if (record.status !== "ready_to_publish") {
+    await repository.saveReview(importId, reviewed, true);
+  }
 
-  const versions = buildPublishedPaperVersionsFromImport(record.reviewed, {
+  const versions = buildPublishedPaperVersionsFromImport(reviewed, {
     paperId: request.paperId,
     originalId,
     originalRevision: request.originalRevision,

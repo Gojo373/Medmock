@@ -22,6 +22,7 @@ import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/features/localization/locale-provider";
+import { localizedContent } from "@/features/localization/localized-content";
 import type { PaperVersion } from "@/features/exam/domain";
 import { calculateServerClockOffset, finalizeSynchronizedAttempt, sendAttemptEvents, submitServerAttempt, type EventSyncOutcome } from "@/features/exam/client-attempt";
 import {
@@ -582,7 +583,7 @@ export function ExamWorkspace({
           <BrandMark compact />
         </Link>
         <div className="exam-title">
-          <strong>{paper.title[locale]}</strong>
+          <strong>{localizedContent(paper.title, locale)}</strong>
           <span>
             <ShieldCheck aria-hidden="true" />
             {mode === "mock" ? text.strictMock : text.practice}
@@ -622,7 +623,7 @@ export function ExamWorkspace({
             onClick={() => navigate(section.questionIds[0], authoritativeNow())}
             type="button"
           >
-            <span>{section.title[locale]}</span>
+            <span>{localizedContent(section.title, locale)}</span>
             <small>{sectionCounts[section.id] ?? 0}/{section.questionIds.length} {text.answeredSuffix}</small>
           </button>
         ))}
@@ -650,7 +651,7 @@ export function ExamWorkspace({
 
           <article className="question-card">
             <div className="question-card__number">Q{currentIndex + 1}</div>
-            <h1>{currentQuestion.stem[locale]}</h1>
+            <h1>{localizedContent(currentQuestion.stem, locale)}</h1>
             <div className="answer-options">
               {currentQuestion.options.map((option) => {
                 const selected = answer?.selectedOptionId === option.id;
@@ -659,7 +660,7 @@ export function ExamWorkspace({
 
                 return (
                   <button
-                    aria-label={option.id + ". " + option.text[locale]}
+                    aria-label={option.id + ". " + localizedContent(option.text, locale)}
                     aria-pressed={selected}
                     className={[
                       selected ? "is-selected" : "",
@@ -679,7 +680,7 @@ export function ExamWorkspace({
                     type="button"
                   >
                     <span>{option.id}</span>
-                    <strong>{option.text[locale]}</strong>
+                    <strong>{localizedContent(option.text, locale)}</strong>
                     {selected && <Check aria-hidden="true" />}
                   </button>
                 );
@@ -694,7 +695,7 @@ export function ExamWorkspace({
                 <section>
                   <p>{feedback.status === "correct" ? text.correct : text.notQuite}</p>
                   <h2>{text.correctAnswer}: {feedback.acceptedOptionIds.join(", ")}</h2>
-                  {feedback.solution && <span>{feedback.solution[locale]}</span>}
+                  {feedback.solution && <span>{localizedContent(feedback.solution, locale)}</span>}
                 </section>
               </div>
             )}
@@ -770,7 +771,7 @@ export function ExamWorkspace({
 
           <div className="palette-section">
             <div>
-              <span>{currentSection.title[locale]}</span>
+              <span>{localizedContent(currentSection.title, locale)}</span>
               <small>{currentSection.questionIds.length} {text.questions}</small>
             </div>
             <div className="palette-grid">

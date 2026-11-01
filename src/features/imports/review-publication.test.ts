@@ -148,6 +148,85 @@ describe("import review and atomic publication", () => {
     );
   });
 
+  it("publishes reviewed English-only content without inventing Hindi", async () => {
+    const reviewed = draft();
+    delete reviewed.paper.title?.hi;
+    delete reviewed.paper.sections[0].title?.hi;
+    delete reviewed.paper.questions[0].stem?.hi;
+    delete reviewed.paper.questions[0].solution?.hi;
+    for (const option of reviewed.paper.questions[0].options) {
+      delete option.text?.hi;
+    }
+    reviewed.reviewFlags.forEach((flag) => {
+      flag.resolved = true;
+    });
+    const store = repository(reviewed);
+    store.get.mockResolvedValue({
+      status: "ready_to_publish",
+      reconciled: reviewed,
+      reviewed,
+    });
+
+    await publishReviewedImport(store, "import-1", "admin-1", {
+      approved: true,
+      paperId: "neet-english",
+      originalRevision: 1,
+      currentRevision: 2,
+    }, "2026-11-01T00:00:00.000Z");
+
+    expect(store.publish).toHaveBeenCalledWith(
+      "import-1",
+      "admin-1",
+      expect.objectContaining({
+        original: expect.objectContaining({
+          title: { en: "NEET 2025" },
+          questions: expect.arrayContaining([
+            expect.objectContaining({ stem: { en: "Question" } }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("persists normalized legacy Hindi flags before atomic publication", async () => {
+    const reviewed = draft();
+    reviewed.reviewFlags.forEach((flag) => {
+      flag.resolved = true;
+    });
+    reviewed.reviewFlags.push({
+      id: "missing_field:questions.1.options.A.text.hi",
+      code: "missing_field",
+      path: "questions.1.options.A.text.hi",
+      message: "Required reviewed content is missing or invalid.",
+      severity: "error",
+      resolved: false,
+    });
+    const store = repository(reviewed);
+    store.get.mockResolvedValue({
+      status: "review_required",
+      reconciled: reviewed,
+      reviewed,
+    });
+
+    await publishReviewedImport(store, "import-1", "admin-1", {
+      approved: true,
+      paperId: "neet-legacy",
+      originalRevision: 1,
+      currentRevision: 2,
+    });
+
+    expect(store.saveReview).toHaveBeenCalledWith(
+      "import-1",
+      expect.objectContaining({
+        reviewFlags: expect.not.arrayContaining([
+          expect.objectContaining({ path: "questions.1.options.A.text.hi" }),
+        ]),
+      }),
+      true,
+    );
+    expect(store.publish).toHaveBeenCalledOnce();
+  });
+
   it("returns existing matching publication IDs on a published retry", async () => {
     const reviewed = draft();
     reviewed.reviewFlags.forEach((flag) => {

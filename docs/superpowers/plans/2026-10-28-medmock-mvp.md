@@ -13,7 +13,7 @@ Spec: docs/product/medmock-spec.md
 ## Global Constraints
 
 - Use the MedMock brand and the tagline "Practice the paper. Master the pressure."
-- Full English/Hindi UI and question localization.
+- Full English/Hindi application UI; English paper content is required, Hindi paper content is optional, and Hindi UI falls back to reviewed English content when needed.
 - Responsive desktop-first UI, light exam default, dark mode, WCAG 2.2 AA.
 - No import may publish without explicit admin review.
 - Published paper revisions are immutable.

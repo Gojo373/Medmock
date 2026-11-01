@@ -9,6 +9,10 @@ import {
   reviewImport,
   type ImportReviewRepository,
 } from "@/features/imports/server/import-review-service";
+import {
+  normalizeOptionalHindiReviewFlags,
+  validateImportForPublish,
+} from "@/features/imports/reconciliation";
 import { getRequestUser } from "@/lib/auth/server-auth";
 import { logServerEvent } from "@/lib/server/logger";
 
@@ -61,12 +65,15 @@ export function createImportReviewHandlers(repository: ImportReviewRepository) {
         if (!record) {
           return Response.json({ error: "import_not_found" }, { status: 404 });
         }
+        const document = normalizeOptionalHindiReviewFlags(
+          record.reviewed ?? record.reconciled,
+        );
         return Response.json({
           importId: authorization.importId,
           status: record.status,
-          document: record.reviewed ?? record.reconciled,
+          document,
           canPublish:
-            record.status === "ready_to_publish" || record.status === "published",
+            record.status === "published" || validateImportForPublish(document).canPublish,
           sources: record.sources ?? [],
         });
       } catch {

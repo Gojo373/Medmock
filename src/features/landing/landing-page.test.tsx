@@ -40,6 +40,7 @@ describe("LandingPage", () => {
                 en: "Reviewed NEET current pattern",
                 hi: "समीक्षित नीट वर्तमान पैटर्न",
               },
+              isBilingual: true,
               publishedAt: "2026-10-28T10:00:00.000Z",
               questions: 180,
               minutes: 180,
@@ -60,6 +61,28 @@ describe("LandingPage", () => {
       "href",
       "/papers/neet-reviewed?version=neet-reviewed-current-v2",
     );
+  });
+
+  it("falls back to English and labels an English-only paper accurately", () => {
+    render(
+      <LocaleProvider initialLocale="hi">
+        <LandingPage papers={[{
+          id: "neet-english",
+          pattern: "current",
+          title: { en: "English NEET paper" },
+          isBilingual: false,
+          publishedAt: "2026-11-01T00:00:00.000Z",
+          questions: 180,
+          minutes: 180,
+          attempts: "New",
+          gradient: "paper-card--cyan",
+        }]} />
+      </LocaleProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "English NEET paper" })).toBeInTheDocument();
+    expect(screen.getByText("अंग्रेज़ी पेपर")).toBeInTheDocument();
+    expect(screen.queryByText("अंग्रेज़ी + हिंदी")).not.toBeInTheDocument();
   });
 
   it("presents the MedMock brand, navigation, and published paper library", () => {
