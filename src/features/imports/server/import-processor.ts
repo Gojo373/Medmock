@@ -43,13 +43,12 @@ export type ProviderRuntime = {
 };
 
 export type ProviderRuntimes = Partial<
-  Record<"openai" | "gemini" | "agentrouter", ProviderRuntime>
+  Record<"openai" | "gemini", ProviderRuntime>
 >;
 
 function selectedRuntimeIds(selection: ProviderSelection) {
   if (selection === "openai") return ["openai"] as const;
   if (selection === "gemini") return ["gemini"] as const;
-  if (selection === "agentrouter") return ["agentrouter"] as const;
   return ["openai", "gemini"] as const;
 }
 

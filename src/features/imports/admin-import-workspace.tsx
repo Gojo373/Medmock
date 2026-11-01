@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  BarChart3,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -11,14 +10,11 @@ import {
   FileText,
   Files,
   GitCompareArrows,
-  LayoutDashboard,
   LibraryBig,
   ListChecks,
-  Settings2,
   ShieldCheck,
   Sparkles,
   UploadCloud,
-  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState, type ChangeEvent } from "react";
@@ -27,6 +23,7 @@ import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
+import { useLocale } from "@/features/localization/locale-provider";
 import type { ProviderSelection } from "@/features/imports/schema";
 
 const copy = {
@@ -102,13 +99,6 @@ const providers: Array<{
     accent: "gemini",
   },
   {
-    id: "agentrouter",
-    title: "AgentRouter",
-    subtitle: "Multimodal Responses · inline PDF/image",
-    label: "Use AgentRouter",
-    accent: "agentrouter",
-  },
-  {
     id: "both",
     title: "Both",
     subtitle: "Compare fields and flag disagreements",
@@ -117,9 +107,22 @@ const providers: Array<{
   },
 ];
 
-export function AdminImportWorkspace() {
-  const [provider, setProvider] = useState<ProviderSelection>("both");
-  const [locale, setLocale] = useState<keyof typeof copy>("en");
+export function AdminImportWorkspace({
+  availableProviders = ["openai", "gemini"],
+}: {
+  availableProviders?: Array<"openai" | "gemini">;
+}) {
+  const enabledProviders = providers.filter((item) =>
+    item.id === "both"
+      ? availableProviders.includes("openai") && availableProviders.includes("gemini")
+      : availableProviders.includes(item.id),
+  );
+  const [provider, setProvider] = useState<ProviderSelection>(
+    enabledProviders.some((item) => item.id === "both")
+      ? "both"
+      : enabledProviders[0]?.id ?? "gemini",
+  );
+  const { locale, toggleLocale } = useLocale();
   const [paperFile, setPaperFile] = useState<File>();
   const [answerKeyFile, setAnswerKeyFile] = useState<File>();
   const [solutionFile, setSolutionFile] = useState<File>();
@@ -135,7 +138,7 @@ export function AdminImportWorkspace() {
   }
 
   async function startImport() {
-    if (!paperFile) return;
+    if (!paperFile || enabledProviders.length === 0) return;
     setImportStatus("uploading");
     const sources = [
       { file: paperFile, kind: "paper" as const },
@@ -210,7 +213,7 @@ export function AdminImportWorkspace() {
       <header className="admin-topbar">
         <BrandMark compact />
         <div className="admin-topbar__trail">
-          <span>Admin</span>
+          <span>{locale === "hi" ? "एडमिन" : "Admin"}</span>
           <ChevronRight aria-hidden="true" size={15} />
           <strong>{locale === "en" ? "Paper imports" : "पेपर इम्पोर्ट"}</strong>
         </div>
@@ -220,15 +223,15 @@ export function AdminImportWorkspace() {
             {locale === "en" ? "Systems healthy" : "सिस्टम सक्रिय"}
           </span>
           <Button
-            aria-label="Switch admin language"
+            aria-label={locale === "hi" ? "एडमिन की भाषा बदलें" : "Switch admin language"}
             className="admin-language"
-            onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+            onClick={toggleLocale}
             tone="ghost"
           >
             {currentCopy.language}
           </Button>
           <ThemeToggle />
-          <div className="admin-avatar" title="MedMock administrator">
+          <div className="admin-avatar" title={locale === "hi" ? "MedMock प्रशासक" : "MedMock administrator"}>
             DS
           </div>
         </div>
@@ -236,23 +239,19 @@ export function AdminImportWorkspace() {
 
       <div className="admin-frame">
         <aside className="admin-sidebar">
-          <nav aria-label="Admin navigation">
-            <Link href="/admin"><LayoutDashboard aria-hidden="true" /> Overview</Link>
-            <Link className="is-active" href="/admin/imports">
-              <UploadCloud aria-hidden="true" /> Paper imports
-              <span>3</span>
+          <nav aria-label={locale === "hi" ? "एडमिन नेविगेशन" : "Admin navigation"}>
+            <Link aria-current="page" className="is-active" href="/admin/imports">
+              <UploadCloud aria-hidden="true" /> {locale === "hi" ? "पेपर इम्पोर्ट" : "Paper imports"}
             </Link>
-            <Link href="/admin/papers"><LibraryBig aria-hidden="true" /> Paper library</Link>
-            <Link href="/admin/reviews"><ClipboardCheck aria-hidden="true" /> Review queue</Link>
-            <Link href="/admin/students"><Users aria-hidden="true" /> Students</Link>
-            <Link href="/admin/analytics"><BarChart3 aria-hidden="true" /> Analytics</Link>
+            <Link href="/#papers"><LibraryBig aria-hidden="true" /> {locale === "hi" ? "पेपर लाइब्रेरी" : "Paper library"}</Link>
+            <Link href="/dashboard"><ListChecks aria-hidden="true" /> {locale === "hi" ? "मेरा प्रयास इतिहास" : "My attempt history"}</Link>
+            {importId && <Link href={`/admin/imports/${importId}`}><ClipboardCheck aria-hidden="true" /> {locale === "hi" ? "वर्तमान इम्पोर्ट समीक्षा" : "Review current import"}</Link>}
           </nav>
           <div className="admin-sidebar__bottom">
-            <Link href="/admin/settings"><Settings2 aria-hidden="true" /> Settings</Link>
             <div className="capacity-card">
               <Sparkles aria-hidden="true" />
-              <strong>500 concurrent</strong>
-              <span>Launch capacity target</span>
+              <strong>500 {locale === "hi" ? "एकसाथ प्रयास" : "concurrent"}</strong>
+              <span>{locale === "hi" ? "लॉन्च क्षमता लक्ष्य" : "Launch capacity target"}</span>
               <div><i /></div>
             </div>
           </div>
@@ -271,7 +270,7 @@ export function AdminImportWorkspace() {
             </div>
           </div>
 
-          <div className="import-stepper" aria-label="Import progress">
+          <div className="import-stepper" aria-label={locale === "hi" ? "इम्पोर्ट प्रगति" : "Import progress"}>
             <div className="is-active">
               <span>1</span>
               <strong>{locale === "en" ? "Sources" : "स्रोत"}</strong>
@@ -314,7 +313,7 @@ export function AdminImportWorkspace() {
                 <div className={"paper-dropzone" + (paperFile ? " has-file" : "")}>
                   <input
                     accept=".pdf,.jpg,.jpeg,.png"
-                    aria-label="Paper file"
+                    aria-label={locale === "hi" ? "प्रश्न पत्र फ़ाइल" : "Paper file"}
                     hidden
                     onChange={onPaperSelected}
                     ref={paperInput}
@@ -324,7 +323,7 @@ export function AdminImportWorkspace() {
                     {paperFile ? <CheckCircle2 aria-hidden="true" /> : <UploadCloud aria-hidden="true" />}
                   </div>
                   <strong>{paperFile?.name ?? currentCopy.uploadHint}</strong>
-                  <span>{paperFile ? "Ready for extraction" : currentCopy.uploadDetail}</span>
+                  <span>{paperFile ? locale === "hi" ? "एक्सट्रैक्शन के लिए तैयार" : "Ready for extraction" : currentCopy.uploadDetail}</span>
                   <Button onClick={() => paperInput.current?.click()} tone="secondary">
                     <Files aria-hidden="true" size={17} />
                     {currentCopy.choose}
@@ -344,10 +343,11 @@ export function AdminImportWorkspace() {
                   </div>
                 </div>
 
+                {enabledProviders.length === 0 && <p role="status">{locale === "hi" ? "कोई एक्सट्रैक्शन प्रदाता सक्रिय नहीं है।" : "No extraction provider is enabled."}</p>}
                 <div className="provider-grid">
-                  {providers.map((item) => (
+                  {enabledProviders.map((item) => (
                     <button
-                      aria-label={item.label}
+                      aria-label={locale === "hi" ? item.id === "both" ? "दोनों प्रदाता चुनें" : `${item.title} चुनें` : item.label}
                       aria-pressed={provider === item.id}
                       className={"provider-card provider-card--" + item.accent}
                       key={item.id}
@@ -357,8 +357,8 @@ export function AdminImportWorkspace() {
                       <span className="provider-card__check">
                         {provider === item.id && <Check aria-hidden="true" size={13} />}
                       </span>
-                      <strong>{item.title}</strong>
-                      <small>{item.subtitle}</small>
+                      <strong>{locale === "hi" && item.id === "both" ? "दोनों" : item.title}</strong>
+                      <small>{locale === "hi" ? item.id === "both" ? "फ़ील्ड की तुलना और मतभेद समीक्षा" : "दस्तावेज़ से संरचित प्रश्न" : item.subtitle}</small>
                     </button>
                   ))}
                 </div>
@@ -378,7 +378,7 @@ export function AdminImportWorkspace() {
                 <div className="source-file-grid">
                   <input
                     accept=".pdf,.jpg,.jpeg,.png"
-                    aria-label="Official answer key file"
+                    aria-label={locale === "hi" ? "आधिकारिक उत्तर कुंजी फ़ाइल" : "Official answer key file"}
                     hidden
                     onChange={(event) => setAnswerKeyFile(event.target.files?.[0])}
                     ref={answerKeyInput}
@@ -390,11 +390,11 @@ export function AdminImportWorkspace() {
                       <strong>{answerKeyFile?.name ?? currentCopy.answerKey}</strong>
                       <small>{currentCopy.answerKeyDetail}</small>
                     </span>
-                    <em>{answerKeyFile ? "Change" : "+ Add"}</em>
+                    <em>{locale === "hi" ? answerKeyFile ? "बदलें" : "+ जोड़ें" : answerKeyFile ? "Change" : "+ Add"}</em>
                   </button>
                   <input
                     accept=".pdf,.jpg,.jpeg,.png"
-                    aria-label="Solution booklet file"
+                    aria-label={locale === "hi" ? "समाधान पुस्तिका फ़ाइल" : "Solution booklet file"}
                     hidden
                     onChange={(event) => setSolutionFile(event.target.files?.[0])}
                     ref={solutionInput}
@@ -406,21 +406,21 @@ export function AdminImportWorkspace() {
                       <strong>{solutionFile?.name ?? currentCopy.solutions}</strong>
                       <small>{currentCopy.solutionsDetail}</small>
                     </span>
-                    <em>{solutionFile ? "Change" : "+ Add"}</em>
+                    <em>{locale === "hi" ? solutionFile ? "बदलें" : "+ जोड़ें" : solutionFile ? "Change" : "+ Add"}</em>
                   </button>
                 </div>
               </GlassPanel>
 
               <div className="import-action-row">
-                <span><ShieldCheck aria-hidden="true" /> Files stay private until publication.</span>
-                <Button disabled={!paperFile || importStatus === "uploading"} onClick={startImport}>
-                  {importStatus === "uploading" ? "Uploading…" : currentCopy.next}
+                <span><ShieldCheck aria-hidden="true" /> {locale === "hi" ? "प्रकाशन तक फ़ाइलें निजी रहती हैं।" : "Files stay private until publication."}</span>
+                <Button disabled={!paperFile || enabledProviders.length === 0 || importStatus === "uploading"} onClick={startImport}>
+                  {importStatus === "uploading" ? locale === "hi" ? "अपलोड हो रहा है…" : "Uploading…" : currentCopy.next}
                   <ChevronRight aria-hidden="true" size={18} />
                 </Button>
               </div>
               {importStatus !== "idle" && importStatus !== "uploading" && (
                 <p className="import-status" role="status">
-                  {importStatus === "queued"
+                  {locale === "hi" ? importStatus === "queued" ? "इम्पोर्ट एक्सट्रैक्शन और समीक्षा के लिए कतार में है।" : "इम्पोर्ट कतार में नहीं जुड़ सका। फिर प्रयास करें।" : importStatus === "queued"
                     ? "Import queued for extraction and review."
                     : "The import could not be queued. Please retry."}
                   {importStatus === "queued" && importId && (
@@ -439,23 +439,23 @@ export function AdminImportWorkspace() {
                 <h2>{currentCopy.safetyTitle}</h2>
                 <p>{currentCopy.safetyDetail}</p>
                 <div className="review-checks">
-                  <span><GitCompareArrows aria-hidden="true" /><i><strong>Provider conflicts</strong><small>Compared field by field</small></i></span>
-                  <span><AlertTriangle aria-hidden="true" /><i><strong>Confidence flags</strong><small>Threshold below 80%</small></i></span>
-                  <span><FileKey2 aria-hidden="true" /><i><strong>Official key wins</strong><small>Answer source is traceable</small></i></span>
-                  <span><CheckCircle2 aria-hidden="true" /><i><strong>Explicit approval</strong><small>Required before publish</small></i></span>
+                  <span><GitCompareArrows aria-hidden="true" /><i><strong>{locale === "hi" ? "प्रदाताओं के मतभेद" : "Provider conflicts"}</strong><small>{locale === "hi" ? "हर फ़ील्ड की तुलना" : "Compared field by field"}</small></i></span>
+                  <span><AlertTriangle aria-hidden="true" /><i><strong>{locale === "hi" ? "विश्वास स्तर फ़्लैग" : "Confidence flags"}</strong><small>{locale === "hi" ? "80% से कम स्तर" : "Threshold below 80%"}</small></i></span>
+                  <span><FileKey2 aria-hidden="true" /><i><strong>{locale === "hi" ? "आधिकारिक कुंजी प्राथमिक" : "Official key wins"}</strong><small>{locale === "hi" ? "उत्तर का स्रोत दर्ज है" : "Answer source is traceable"}</small></i></span>
+                  <span><CheckCircle2 aria-hidden="true" /><i><strong>{locale === "hi" ? "स्पष्ट स्वीकृति" : "Explicit approval"}</strong><small>{locale === "hi" ? "प्रकाशन से पहले आवश्यक" : "Required before publish"}</small></i></span>
                 </div>
               </GlassPanel>
 
               <div className="import-summary-card">
-                <span>Expected output</span>
-                <div><strong>180</strong><small>questions</small></div>
-                <div><strong>2</strong><small>languages</small></div>
-                <div><strong>5</strong><small>confidence fields</small></div>
+                <span>{locale === "hi" ? "अपेक्षित संरचना" : "Expected output"}</span>
+                <div><strong>180</strong><small>{locale === "hi" ? "प्रश्न" : "questions"}</small></div>
+                <div><strong>2</strong><small>{locale === "hi" ? "भाषाएँ" : "languages"}</small></div>
+                <div><strong>5</strong><small>{locale === "hi" ? "विश्वास स्तर फ़ील्ड" : "confidence fields"}</small></div>
               </div>
 
               <p className="rights-note">
                 <ShieldCheck aria-hidden="true" />
-                Upload only papers you have the right to publish. MedMock is not affiliated with NTA.
+                {locale === "hi" ? "केवल वही पेपर अपलोड करें जिनके प्रकाशन का अधिकार आपके पास है। MedMock NTA से संबद्ध नहीं है।" : "Upload only papers you have the right to publish. MedMock is not affiliated with NTA."}
               </p>
             </aside>
           </div>

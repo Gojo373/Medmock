@@ -1,6 +1,80 @@
 # MedMock continuation handoff
 
-Last updated: 2026-10-30 17:20 IST
+Last updated: 2026-11-01
+
+## Current checkpoint — final local delta, external gates still open
+
+This section supersedes all historical restart/checkpoint instructions below.
+
+- Branch: `feat/medmock-mvp`; starting committed base for this delta: `fcc6c29`.
+- Final delta commit subject: `fix: finish provider controls and bilingual student flows`.
+- Tasks 1–5 remain complete. All locally actionable Task 6 follow-up work,
+  including the three previously deferred Minor findings, is implemented.
+- AgentRouter is removed from current provider contracts/adapters/UI. OpenAI
+  imports require exact `OPENAI_IMPORTS_ENABLED=true` plus a key; Gemini is the
+  enabled default with `gemini-3.8-flash`. The new final constraint migration is
+  `supabase/migrations/202610300003_disable_agentrouter_provider.sql`.
+- Admin imports require authenticated admin access and expose only enabled
+  providers; no enabled provider produces a labelled empty state and prevents
+  extraction even with a selected source.
+- One root locale provider owns persisted English/Hindi across public, exam,
+  admin/review, and analytics screens. Document language, Hindi accessible names,
+  bilingual review spans, and denied-storage fallback have RED→GREEN coverage.
+- Cumulative question time survives clearing/unanswered questions, persists in
+  finalized result JSON, and feeds dashboard total/subject/topic/visited pace.
+  Optional map fields preserve legacy compatibility and answer/scoring semantics.
+- Mobile disclosure, admin links to implemented destinations, review return
+  navigation, and selectable attempt-history analysis are finished. Rankings for
+  an unloaded historical paper are withheld with an explanation.
+- Self-review found and fixed public-detail Client Component serialization:
+  props now contain only id/paperId/title/duration/questionCount, with an
+  observed RED→GREEN summary-boundary regression.
+- `AGENTS.md` remains untouched and excluded from staging/commit.
+
+Final unchanged-source verification: 29 files / 135 tests passed in 190.10s;
+lint and type-check exited 0; production build exited 0, generated
+14/14 pages, and compiled every dynamic route plus Next 16 Proxy.
+Playwright exits 1 before discovery
+on Android with `Error: Unsupported platform: android` under Node v24.22.1.
+Task 6 is **not complete**.
+
+### Fresh external evidence and exact blockers
+
+`env -u LD_LIBRARY_PATH node .superpowers/validation/read-only-check.mjs`
+reports environment names/presence and service statuses only. Fresh reads passed
+Supabase auth settings, published-paper access, private `paper-imports` bucket,
+legacy-provider-job lookup, and OpenAI/Gemini model access (all HTTP 200).
+Only Gemini imports are enabled. Email auth is enabled, Google is disabled.
+No published staging fixture or AgentRouter job rows are currently present.
+
+Remaining work requires external access or a supported host:
+
+1. Supply staging SQL access (`SUPABASE_DB_URL`/`DATABASE_URL` or management
+   credentials), transactionally verify the final migration and rerun
+   `.superpowers/validation/rls-smoke.sql`. The full 2026-10-30 staging rollback
+   smoke remains historical evidence; it was not rerun in this session.
+2. Apply the final provider-removal migration before deploying this delta. Its
+   constraint is prepared locally and no legacy jobs were observed, but it has
+   not been applied or rollback-validated here.
+3. Provide real published paper/version IDs and an existing authenticated
+   `E2E_AUTH_STORAGE_STATE` file, then run Playwright/axe on Linux. The current
+   IDs are placeholders, the configured state file is absent, and Android is
+   unsupported.
+4. Validate Google/email auth, rotated cookies, signed uploads, cron, canonical
+   site origin, and Vercel configuration on a deployed environment. Google is
+   disabled and Vercel project credentials are absent. No deployment or external
+   auth setting was changed.
+5. Run representative approved bilingual PDF/image extraction and the staging
+   500-concurrent-attempt load test. The historical Gemini PDF success is
+   recorded; fresh model access is read-only and does not prove extraction or
+   available generation quota. OpenAI is disabled; historical quota exhaustion
+   remains relevant only if it is explicitly enabled.
+
+Do not resume old RED tests or re-audit the repository. Read the ledger, plan,
+spec, then run `git status --short` and inspect only a newly authorized active
+step. Keep Task 6 open until mandatory external/browser gates actually pass.
+Full implementation/TDD/verification evidence is in
+`.superpowers/sdd/2026-10-28-medmock-mvp/task-6-report.md`.
 
 ## Latest checkpoint — staging database and AgentRouter expansion
 

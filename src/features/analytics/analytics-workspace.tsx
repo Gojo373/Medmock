@@ -19,6 +19,7 @@ import { useMemo, useState } from "react";
 import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { useLocale } from "@/features/localization/locale-provider";
 import {
   buildPerformanceAnalytics,
   type LeaderboardSnapshot,
@@ -122,7 +123,7 @@ function formatPercent(value: number) {
 }
 
 export function AnalyticsEmptyState() {
-  const [locale, setLocale] = useState<Locale>("en");
+  const { locale, toggleLocale } = useLocale();
   const text =
     locale === "en"
       ? {
@@ -141,14 +142,14 @@ export function AnalyticsEmptyState() {
   return (
     <main className="analytics-shell">
       <header className="analytics-topbar">
-        <Link aria-label="MedMock home" href="/">
+        <Link aria-label={locale === "hi" ? "MedMock मुख्य पृष्ठ" : "MedMock home"} href="/">
           <BrandMark compact />
         </Link>
         <div />
         <div>
           <Button
-            aria-label="Switch analytics language"
-            onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+            aria-label={locale === "hi" ? "विश्लेषण की भाषा बदलें" : "Switch analytics language"}
+            onClick={toggleLocale}
             tone="ghost"
           >
             <Languages aria-hidden="true" size={17} />
@@ -172,6 +173,7 @@ export function AnalyticsEmptyState() {
 }
 
 export function AnalyticsLoadingState() {
+  const { locale } = useLocale();
   return (
     <main className="analytics-shell">
       <div className="analytics-page">
@@ -181,8 +183,8 @@ export function AnalyticsLoadingState() {
           role="status"
         >
           <TrendingUp aria-hidden="true" />
-          <h1>Loading your dashboard…</h1>
-          <p>आपका डैशबोर्ड और सुरक्षित प्रयास इतिहास लोड हो रहा है।</p>
+          <h1>{locale === "hi" ? "आपका डैशबोर्ड लोड हो रहा है…" : "Loading your dashboard…"}</h1>
+          <p>{locale === "hi" ? "आपका सुरक्षित प्रयास इतिहास लोड हो रहा है।" : "Loading your secure attempt history."}</p>
         </section>
       </div>
     </main>
@@ -190,7 +192,7 @@ export function AnalyticsLoadingState() {
 }
 
 export function AnalyticsErrorState({ retry }: { retry: () => void }) {
-  const [locale, setLocale] = useState<Locale>("en");
+  const { locale, toggleLocale } = useLocale();
   const text = locale === "en"
     ? {
         title: "Your dashboard could not be loaded.",
@@ -206,13 +208,13 @@ export function AnalyticsErrorState({ retry }: { retry: () => void }) {
   return (
     <main className="analytics-shell">
       <header className="analytics-topbar">
-        <Link aria-label="MedMock home" href="/">
+        <Link aria-label={locale === "hi" ? "MedMock मुख्य पृष्ठ" : "MedMock home"} href="/">
           <BrandMark compact />
         </Link>
         <div />
         <Button
-          aria-label="Switch analytics language"
-          onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+          aria-label={locale === "hi" ? "विश्लेषण की भाषा बदलें" : "Switch analytics language"}
+          onClick={toggleLocale}
           tone="ghost"
         >
           <Languages aria-hidden="true" size={17} />
@@ -232,7 +234,7 @@ export function AnalyticsErrorState({ retry }: { retry: () => void }) {
 }
 
 export function AnalyticsShell({
-  currentAttempt,
+  currentAttempt: latestAttempt,
   eligibleAttemptCount,
   history,
   leaderboard,
@@ -244,16 +246,19 @@ export function AnalyticsShell({
   leaderboard: LeaderboardSnapshot;
   initialHideName?: boolean;
 }) {
-  const [locale, setLocale] = useState<Locale>("en");
+  const { locale, toggleLocale } = useLocale();
+  const [selectedAttemptId, setSelectedAttemptId] = useState(latestAttempt.attempt.id);
+  const currentAttempt = history.find((item) => item.attempt.id === selectedAttemptId) ?? latestAttempt;
+  const hasLoadedLeaderboard = currentAttempt.paper.id === latestAttempt.paper.id;
   const [hideName, setHideName] = useState(initialHideName);
   const [privacyState, setPrivacyState] = useState<"error" | "idle" | "saving">("idle");
   const text = copy[locale];
   const analytics = useMemo(
     () =>
       buildPerformanceAnalytics(currentAttempt.paper, currentAttempt.attempt, {
-        eligibleAttemptCount,
+        eligibleAttemptCount: hasLoadedLeaderboard ? eligibleAttemptCount : 0,
       }),
-    [currentAttempt, eligibleAttemptCount],
+    [currentAttempt, eligibleAttemptCount, hasLoadedLeaderboard],
   );
   const weakestTopics = [...analytics.topics]
     .filter((topic) => topic.attempted > 0)
@@ -263,23 +268,23 @@ export function AnalyticsShell({
         right.timeSpentMs - left.timeSpentMs,
     )
     .slice(0, 4);
-  const currentRank = leaderboard.entries.find((entry) => entry.currentUser);
+  const currentRank = hasLoadedLeaderboard ? leaderboard.entries.find((entry) => entry.currentUser) : undefined;
 
   return (
     <main className="analytics-shell">
       <header className="analytics-topbar">
-        <Link aria-label="MedMock home" href="/">
+        <Link aria-label={locale === "hi" ? "MedMock मुख्य पृष्ठ" : "MedMock home"} href="/">
           <BrandMark compact />
         </Link>
-        <nav aria-label="Analytics navigation">
+        <nav aria-label={locale === "hi" ? "विश्लेषण नेविगेशन" : "Analytics navigation"}>
           <a href="#analysis">{text.analysis}</a>
           <a href="#history">{text.attemptHistory}</a>
           <a href="#leaderboard">{text.leaderboard}</a>
         </nav>
         <div>
           <Button
-            aria-label="Switch analytics language"
-            onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+            aria-label={locale === "hi" ? "विश्लेषण की भाषा बदलें" : "Switch analytics language"}
+            onClick={toggleLocale}
             tone="ghost"
           >
             <Languages aria-hidden="true" size={17} />
@@ -309,7 +314,7 @@ export function AnalyticsShell({
         </section>
 
         <section
-          aria-label="Attempt summary"
+          aria-label={locale === "hi" ? "प्रयास सारांश" : "Attempt summary"}
           className="analytics-stat-grid"
           role="region"
         >
@@ -331,7 +336,7 @@ export function AnalyticsShell({
           <StatCard
             icon={<Clock3 aria-hidden="true" />}
             label={text.averagePace}
-            value={formatDuration(analytics.overall.averageTimePerAnsweredMs)}
+            value={formatDuration(analytics.overall.averageTimePerVisitedMs)}
           />
         </section>
 
@@ -343,7 +348,7 @@ export function AnalyticsShell({
                 ? `${text.percentileReady}: ${currentRank?.percentile ?? "—"}`
                 : text.percentilePending}
             </strong>
-            <span>{eligibleAttemptCount} / 100 eligible attempts</span>
+            <span>{hasLoadedLeaderboard ? eligibleAttemptCount : 0} / 100 {locale === "hi" ? "योग्य प्रयास" : "eligible attempts"}</span>
           </div>
         </section>
 
@@ -395,7 +400,7 @@ export function AnalyticsShell({
         </div>
 
         <section
-          aria-label="Solution review"
+          aria-label={text.solutionReview}
           className="analytics-panel solution-review"
           role="region"
         >
@@ -447,6 +452,9 @@ export function AnalyticsShell({
                 </div>
                 <span>{item.result.score} / {item.result.maxScore}</span>
                 <span><ShieldCheck aria-hidden="true" /> {text.reviewed}</span>
+                <Button aria-controls="analysis" aria-label={`${locale === "hi" ? "विश्लेषण देखें" : "View analysis"}: ${item.paper.title[locale]} · ${new Date(item.attempt.submittedAt ?? item.attempt.startedAt).toLocaleString(locale === "hi" ? "hi-IN" : "en-IN")}`} aria-pressed={item.attempt.id === currentAttempt.attempt.id} onClick={() => setSelectedAttemptId(item.attempt.id)} tone="ghost">
+                  {locale === "hi" ? "विश्लेषण देखें" : "View analysis"}
+                </Button>
               </article>
             ))}
           </div>
@@ -492,6 +500,7 @@ export function AnalyticsShell({
               {privacyState === "error" && <small role="alert">{text.privacyError}</small>}
             </label>
           </div>
+          {!hasLoadedLeaderboard && <p role="status">{locale === "hi" ? "रैंकिंग नवीनतम पेपर के लिए उपलब्ध है। उसे इतिहास से चुनें।" : "Rankings are loaded for your latest paper. Select it from history to view them."}</p>}
           <div className="leaderboard-table-wrap">
             <table>
               <thead>
@@ -503,7 +512,7 @@ export function AnalyticsShell({
                 </tr>
               </thead>
               <tbody>
-                {leaderboard.entries.map((entry) => (
+                {(hasLoadedLeaderboard ? leaderboard.entries : []).map((entry) => (
                   <tr className={entry.currentUser ? "is-current" : ""} key={`${entry.rank}-${entry.submittedAt}`}>
                     <td>#{entry.rank}</td>
                     <td>

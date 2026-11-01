@@ -435,6 +435,14 @@ export function mergeAnswerEvents(
   );
 }
 
+export function materializeQuestionTimes(events: AnswerEvent[]) {
+  const times: Record<string, number> = {};
+  for (const event of mergeAnswerEvents([], events)) {
+    times[event.questionId] = Math.max(times[event.questionId] ?? 0, event.timeSpentMs);
+  }
+  return times;
+}
+
 export function materializeAnswers(events: AnswerEvent[]) {
   const answers: Record<
     string,
@@ -453,7 +461,7 @@ export function materializeAnswers(events: AnswerEvent[]) {
       answers[event.questionId] = {
         selectedOptionId: event.selectedOptionId,
         answeredAt: event.occurredAt,
-        timeSpentMs: event.timeSpentMs,
+        timeSpentMs: timeSpentByQuestionMs[event.questionId],
       };
     } else if (answers[event.questionId]) {
       answers[event.questionId].timeSpentMs = timeSpentByQuestionMs[event.questionId];

@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import { render } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -68,7 +69,7 @@ function historyItem(currentAttempt: Attempt): AttemptHistoryItem {
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(withEarlierAttempt = false) {
   const currentAttempt = attempt();
   const rivalAttempt = attempt({
     id: "attempt-rival",
@@ -115,7 +116,7 @@ function renderWorkspace() {
     <AnalyticsShell
       currentAttempt={historyItem(currentAttempt)}
       eligibleAttemptCount={64}
-      history={[historyItem(currentAttempt)]}
+      history={[historyItem(currentAttempt), ...(withEarlierAttempt ? [historyItem(attempt({ id: "attempt-earlier", submittedAt: "2026-10-28T11:00:00.000Z", answers: [] }))] : [])]}
       leaderboard={leaderboard}
     />,
   );
@@ -124,6 +125,20 @@ function renderWorkspace() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AnalyticsShell", () => {
+  it("opens a prior attempt from history and updates its score and reviewed answers", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(true);
+    const history = screen.getByRole("heading", { name: "Attempt history" }).closest("section")!;
+    const buttons = within(history).getAllByRole("button", { name: /View analysis/ });
+    expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
+    await user.click(buttons[1]);
+    expect(buttons[1]).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("region", { name: "Attempt summary" })).getByText("0 / 24")).toBeInTheDocument();
+    expect(screen.getAllByText("Your answer: Not answered")).toHaveLength(sampleExamPaper.questions.length);
+    await user.click(buttons[0]);
+    expect(within(screen.getByRole("region", { name: "Attempt summary" })).getByText("7 / 24")).toBeInTheDocument();
+  });
+
   it("summarizes a reviewed result and keeps percentile provisional", () => {
     renderWorkspace();
 

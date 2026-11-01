@@ -1,5 +1,4 @@
 import {
-  createAgentRouterExtractionProvider,
   createGeminiExtractionProvider,
   createOpenAIExtractionProvider,
 } from "@/features/imports/providers";
@@ -12,32 +11,11 @@ type ProviderClientOptions = {
   model: string;
 };
 
-type AgentRouterClientOptions = ProviderClientOptions & {
-  baseUrl?: string;
-};
-
-const maximumAgentRouterInlineBytes = 15 * 1024 * 1024;
-
 async function requireJson(response: Response, operation: string) {
   if (!response.ok) {
     throw new Error(`${operation} failed (${response.status}).`);
   }
   return response.json() as Promise<Record<string, unknown>>;
-}
-
-async function fileBytes(file: File) {
-  if (typeof file.arrayBuffer === "function") {
-    return file.arrayBuffer();
-  }
-  if (typeof FileReader !== "undefined") {
-    return new Promise<ArrayBuffer>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
-      reader.addEventListener("error", () => reject(reader.error));
-      reader.readAsArrayBuffer(file);
-    });
-  }
-  return new Response(file).arrayBuffer();
 }
 
 function openAIOutputText(payload: Record<string, unknown>) {
@@ -111,50 +89,6 @@ export function createOpenAIProviderRuntime({
         throw new Error("OpenAI file upload returned no file identifier.");
       }
       return payload.id;
-    },
-  };
-}
-
-export function createAgentRouterProviderRuntime({
-  apiKey,
-  baseUrl = "https://agentrouter.org/v1",
-  fetcher = fetch,
-  model,
-}: AgentRouterClientOptions): ProviderRuntime {
-  const client = {
-    responses: {
-      async parse(request: unknown) {
-        const response = await fetcher(`${baseUrl.replace(/\/$/, "")}/responses`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(request),
-        });
-        const payload = await requireJson(response, "AgentRouter extraction");
-        return { output_parsed: JSON.parse(openAIOutputText(payload)) };
-      },
-    },
-  };
-
-  return {
-    provider: createAgentRouterExtractionProvider({
-      client,
-      model,
-      format: {
-        type: "json_schema",
-        name: "medmock_import",
-        strict: true,
-        schema: extractionResponseJsonSchema,
-      },
-    }),
-    async uploadFile(file) {
-      if (file.size > maximumAgentRouterInlineBytes) {
-        throw new Error("AgentRouter inline sources cannot exceed 15 MB.");
-      }
-      const encoded = Buffer.from(await fileBytes(file)).toString("base64");
-      return `data:${file.type};base64,${encoded}`;
     },
   };
 }

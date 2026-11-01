@@ -134,6 +134,14 @@ function addQuestionResult(
   }
 }
 
+export function getAttemptQuestionTimes(attempt: Attempt) {
+  const times = { ...attempt.timeSpentByQuestionMs };
+  for (const answer of attempt.answers) {
+    times[answer.questionId] = Math.max(times[answer.questionId] ?? 0, answer.timeSpentMs);
+  }
+  return times;
+}
+
 export function scoreAttempt(
   paperInput: PaperVersion,
   attemptInput: Attempt,
@@ -149,6 +157,9 @@ export function scoreAttempt(
   const answersByQuestionId = new Map(
     attempt.answers.map((answer) => [answer.questionId, answer]),
   );
+  for (const questionId of Object.keys(attempt.timeSpentByQuestionMs ?? {})) {
+    if (!questionById.has(questionId)) throw new Error("Attempt contains time for an unknown question.");
+  }
 
   for (const answer of attempt.answers) {
     const question = questionById.get(answer.questionId);
@@ -260,6 +271,7 @@ export function scoreAttempt(
     paperVersionId: paper.id,
     ...summary,
     questionResults,
+    ...(attempt.timeSpentByQuestionMs ? { timeSpentByQuestionMs: getAttemptQuestionTimes(attempt) } : {}),
     subjectTotals,
   });
 }
@@ -278,6 +290,8 @@ export type AttemptAnalytics = {
     accuracyPercent: number;
     totalTimeMs: number;
     averageTimePerAnsweredMs: number;
+    visited: number;
+    averageTimePerVisitedMs: number;
   };
   subjectTotals: Record<Subject, SubjectScore>;
   leaderboard: {
@@ -322,8 +336,11 @@ export function buildAttemptAnalytics(
 
   const eligible = reasons.length === 0;
   const attempted = result.correct + result.incorrect;
-  const totalTimeMs = attempt.answers.reduce(
-    (total, answer) => total + answer.timeSpentMs,
+  const questionTimes = getAttemptQuestionTimes(attempt);
+  const totalTimeMs = Object.values(questionTimes).reduce((total, time) => total + time, 0);
+  const visited = Object.values(questionTimes).filter((time) => time > 0).length;
+  const answeredTimeMs = attempt.answers.reduce(
+    (total, answer) => total + questionTimes[answer.questionId],
     0,
   );
 
@@ -333,8 +350,10 @@ export function buildAttemptAnalytics(
       attempted,
       accuracyPercent: attempted === 0 ? 0 : (result.correct / attempted) * 100,
       totalTimeMs,
+      visited,
+      averageTimePerVisitedMs: visited ? totalTimeMs / visited : 0,
       averageTimePerAnsweredMs: attempt.answers.length
-        ? totalTimeMs / attempt.answers.length
+        ? answeredTimeMs / attempt.answers.length
         : 0,
     },
     subjectTotals: result.subjectTotals,

@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import { render } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +8,23 @@ import { AdminImportWorkspace } from "@/features/imports/admin-import-workspace"
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportWorkspace", () => {
+  it("disables extraction and explains when no provider is enabled", async () => {
+    const user = userEvent.setup();
+    render(<AdminImportWorkspace availableProviders={[]} />);
+    await user.upload(screen.getByLabelText("Paper file"), new File(["paper"], "neet.pdf", { type: "application/pdf" }));
+    expect(screen.getByRole("status")).toHaveTextContent("No extraction provider is enabled.");
+    expect(screen.getByRole("button", { name: "Start reviewed extraction" })).toBeDisabled();
+  });
+
+  it("navigates to implemented import, public-library, and personal-history destinations", () => {
+    render(<AdminImportWorkspace availableProviders={["gemini"]} />);
+    const navigation = screen.getByRole("navigation", { name: "Admin navigation" });
+    expect(within(navigation).getByRole("link", { name: "Paper imports" })).toHaveAttribute("aria-current", "page");
+    expect(within(navigation).getByRole("link", { name: "Paper library" })).toHaveAttribute("href", "/#papers");
+    expect(within(navigation).getByRole("link", { name: "My attempt history" })).toHaveAttribute("href", "/dashboard");
+    expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["/admin/imports", "/#papers", "/dashboard"]);
+  });
+
   it("presents a guided paper upload and review workflow", () => {
     render(<AdminImportWorkspace />);
 
@@ -18,22 +36,30 @@ describe("AdminImportWorkspace", () => {
     expect(screen.getByText("Nothing publishes without your approval.")).toBeInTheDocument();
   });
 
-  it("lets the admin choose OpenAI, Gemini, AgentRouter, or both", async () => {
+  it("shows only enabled providers and defaults to Gemini when OpenAI is disabled", () => {
+    render(<AdminImportWorkspace availableProviders={["gemini"]} />);
+
+    expect(screen.getByRole("button", { name: "Use Gemini" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByRole("button", { name: "Use OpenAI" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use both providers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use AgentRouter" })).not.toBeInTheDocument();
+  });
+
+  it("lets the admin choose OpenAI, Gemini, or both when both are enabled", async () => {
     const user = userEvent.setup();
-    render(<AdminImportWorkspace />);
+    render(<AdminImportWorkspace availableProviders={["openai", "gemini"]} />);
 
     const both = screen.getByRole("button", { name: "Use both providers" });
     const openai = screen.getByRole("button", { name: "Use OpenAI" });
-    const agentrouter = screen.getByRole("button", { name: "Use AgentRouter" });
 
     expect(both).toHaveAttribute("aria-pressed", "true");
     await user.click(openai);
 
     expect(openai).toHaveAttribute("aria-pressed", "true");
     expect(both).toHaveAttribute("aria-pressed", "false");
-    await user.click(agentrouter);
-    expect(agentrouter).toHaveAttribute("aria-pressed", "true");
-    expect(openai).toHaveAttribute("aria-pressed", "false");
   });
 
   it("uploads the selected source and starts a durable import job", async () => {

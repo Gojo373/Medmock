@@ -95,11 +95,11 @@ Files: Add Supabase migrations/RLS, server clients, API validation/idempotency, 
 
 Interfaces: Finalizes the database/API contract and deployable application.
 
-- [ ] Write failing contract tests for authorization, version immutability, idempotent submission, and public/private data boundaries.
-- [ ] Implement migrations, policies, server services, and production configuration.
+- [x] Write failing contract tests for authorization, version immutability, idempotent submission, and public/private data boundaries.
+- [x] Implement migrations, policies, server services, and production configuration.
 - [ ] Run the complete unit suite, lint, type-check, production build, and browser smoke tests.
-- [ ] Perform whole-branch review and fix Critical/Important findings with RED-GREEN tests.
-- [ ] Commit production hardening.
+- [x] Perform whole-branch review and fix Critical/Important findings with RED-GREEN tests.
+- [x] Commit production hardening.
 
 Continuation note (2026-10-30): local implementation and verification are
 committed through `924597f` (21 files / 95 tests; lint, type-check, and build
@@ -140,3 +140,35 @@ still exits before discovery on Android with `Unsupported platform: android`.
 The 3 Minor findings remain deferred. Task 6 stays open solely for the documented
 staging Supabase/RLS/concurrency, live provider, deployed auth/Vercel/signed
 upload, Linux Playwright/axe, and 500-concurrent-attempt validations.
+
+### Task 6 final continuation (2026-11-01)
+
+The user expanded scope to finish the remaining project. Execute in this
+session without delegation; preserve the provider follow-up already in progress.
+
+- [x] Verify the preserved AgentRouter removal and explicit `OPENAI_IMPORTS_ENABLED=true` gate, with Gemini enabled by default; reject unsupported provider selections and test authenticated admin visibility.
+- [x] Observe RED for a shared locale across landing, exam, imports/review, dashboard/loading/error, and theme controls, including `html.lang`; implement one root locale provider with persistent English/Hindi preference and translated accessible names.
+- [x] Observe RED for cleared/unanswered-question time in dashboard, subject/topic/pace analytics, and finalization; preserve cumulative question timings independently from selected answers, with legacy answer-time fallback.
+- [x] Observe RED for mobile disclosure navigation, admin links targeting implemented destinations, and history selection; implement accessible controls and selected-attempt analysis.
+- [x] Run focused GREEN after each behavior, then `env -u LD_LIBRARY_PATH npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run test:e2e` (each npm command prefixed with the Termux workaround).
+- [x] Check validation environment names/presence only, run available read-only or rollback-only validation, self-review changed files, update handoff/ledger/report, and commit all finished repository work except `AGENTS.md`.
+
+Task 6 completion still requires every mandatory local and external gate to
+actually pass. Do not deploy, push, publish, change auth settings, or claim
+production readiness from successful unit tests alone.
+
+Current execution note (2026-11-01): the user-expanded local follow-up is
+implemented, including the three Minor findings and a separately observed
+RED→GREEN summary-only public detail boundary. Final unchanged-source verification
+passed 29 files / 135 tests in 190.10s; lint, type-check, and production build exited 0
+(14/14 generated pages, every dynamic route and Next 16 Proxy compiled).
+Browser verification exits 1 before discovery on Android with
+`Error: Unsupported platform: android`.
+Task 6 remains open for Linux authenticated Playwright/axe, actual staging
+fixtures/SQL access and final migration validation, deployed auth/Vercel/signed
+upload/cron checks, representative provider generation, and the 500-concurrent
+attempt target. Fresh read-only service/model checks passed; Google is disabled,
+the browser state file is missing, published IDs are placeholders, and no
+published staging paper is present. The final local commit subject is
+`fix: finish provider controls and bilingual student flows`. See the current
+handoff and final task report; Task 6 is not complete.

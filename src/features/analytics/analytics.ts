@@ -9,10 +9,12 @@ import {
 } from "@/features/exam/domain";
 import {
   buildAttemptAnalytics,
+  getAttemptQuestionTimes,
   supportedSubjects,
 } from "@/features/exam/scoring";
 import {
   materializeAnswers,
+  materializeQuestionTimes,
   type AnswerEvent,
 } from "@/features/exam/session";
 import {
@@ -66,9 +68,7 @@ export function buildPerformanceAnalytics(
   policy: { eligibleAttemptCount: number },
 ): PerformanceAnalytics {
   const base = buildAttemptAnalytics(paper, attempt, policy);
-  const answerByQuestionId = new Map(
-    attempt.answers.map((answer) => [answer.questionId, answer]),
-  );
+  const questionTimes = getAttemptQuestionTimes(attempt);
   const resultByQuestionId = new Map(
     base.result.questionResults.map((result) => [result.questionId, result]),
   );
@@ -77,9 +77,9 @@ export function buildPerformanceAnalytics(
   );
   const subjects = supportedSubjects.map((subject) => {
     const totals = base.subjectTotals[subject];
-    const timeSpentMs = attempt.answers.reduce((total, answer) => {
-      const question = questionById.get(answer.questionId);
-      return question?.subject === subject ? total + answer.timeSpentMs : total;
+    const timeSpentMs = Object.entries(questionTimes).reduce((total, [questionId, time]) => {
+      const question = questionById.get(questionId);
+      return question?.subject === subject ? total + time : total;
     }, 0);
 
     return {
@@ -117,7 +117,7 @@ export function buildPerformanceAnalytics(
     bucket.score += result.awardedMarks;
     bucket.maxScore += result.maxMarks;
     bucket[result.status] += 1;
-    bucket.timeSpentMs += answerByQuestionId.get(question.id)?.timeSpentMs ?? 0;
+    bucket.timeSpentMs += questionTimes[question.id] ?? 0;
     topicBuckets.set(key, bucket);
   }
 
@@ -126,10 +126,11 @@ export function buildPerformanceAnalytics(
     attempted: bucket.correct + bucket.incorrect,
     accuracyPercent: accuracyPercent(bucket.correct, bucket.incorrect),
   }));
-  const timedAnswers = attempt.answers
-    .map((answer) => ({
-      questionId: answer.questionId,
-      timeSpentMs: answer.timeSpentMs,
+  const timedAnswers = Object.entries(questionTimes)
+    .filter(([, time]) => time > 0)
+    .map(([questionId, timeSpentMs]) => ({
+      questionId,
+      timeSpentMs,
     }))
     .sort(
       (left, right) =>
@@ -244,6 +245,7 @@ export function buildDashboardDataFromRows(input: DashboardRowInput) {
         startedAt: normalizeDatabaseTimestamp(row.started_at),
         deadlineAt: normalizeDatabaseTimestamp(row.deadline_at),
         submittedAt: normalizeNullableDatabaseTimestamp(row.submitted_at),
+        timeSpentByQuestionMs: materializeQuestionTimes(eventsByAttemptId.get(attemptId) ?? []),
         answers: paper.questions.flatMap((question) => {
           const answer = materialized[question.id];
           return answer
@@ -380,10 +382,7 @@ export function buildLeaderboard(
       ...candidate,
       attempt: AttemptSchema.parse(candidate.attempt),
       result: AttemptResultSchema.parse(candidate.result),
-      totalTimeMs: candidate.attempt.answers.reduce(
-        (total, answer) => total + answer.timeSpentMs,
-        0,
-      ),
+      totalTimeMs: Object.values(getAttemptQuestionTimes(candidate.attempt)).reduce((total, time) => total + time, 0),
     }))
     .filter(eligibleCandidate)
     .sort(compareCandidates);

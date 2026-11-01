@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { render } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,6 +35,12 @@ const reviewDocument = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportReview", () => {
+  it("provides a return link to the import workspace while review loads", () => {
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+    render(<AdminImportReview importId="pending-import" />);
+    expect(screen.getByRole("link", { name: "Return to imports" })).toHaveAttribute("href", "/admin/imports");
+  });
+
   it("shows source files and the complete bilingual paper content and saves edits", async () => {
     const user = userEvent.setup();
     const completeDocument = {
@@ -100,8 +107,9 @@ describe("AdminImportReview", () => {
     expect(screen.getByRole("heading", { name: "Question 1" })).toBeInTheDocument();
     expect(screen.getByText("What is force?")).toBeInTheDocument();
     expect(screen.getByText("बल क्या है?")).toBeInTheDocument();
-    expect(screen.getByText(/Mass times acceleration \/ द्रव्यमान गुणा त्वरण/)).toBeInTheDocument();
-    expect(screen.getByText("Use Newton's second law. / न्यूटन का दूसरा नियम लगाएँ।")).toBeInTheDocument();
+    expect(screen.getByText("Mass times acceleration").closest("li")).toHaveTextContent("Mass times acceleration / द्रव्यमान गुणा त्वरण");
+    expect(screen.getByText("Use Newton's second law.")).toHaveAttribute("lang", "en");
+    expect(screen.getByText("न्यूटन का दूसरा नियम लगाएँ।")).toHaveAttribute("lang", "hi");
 
     const editor = screen.getByRole("textbox", { name: "Complete reviewed paper JSON" });
     const edited = structuredClone(completeDocument.paper);

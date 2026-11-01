@@ -19,7 +19,7 @@ paper, answer key, image, and solution they upload or publish.
 
 1. Use Node.js 22 or newer.
 2. Copy `.env.example` to `.env.local` and fill in the project values.
-3. Apply `supabase/migrations/202610290001_medmock_mvp.sql` to a Supabase project.
+3. Apply every file in `supabase/migrations/` in timestamp order to a Supabase project.
 4. Promote exactly one profile to `role = 'admin'`; never expose the service
    role key to the browser.
 5. Install and start the app:
@@ -32,6 +32,12 @@ paper, answer key, image, and solution they upload or publish.
 The API accepts either the Supabase session cookies established by the auth
 callback or an access token as `Authorization: Bearer <token>`. Import routes
 additionally require the authenticated profile to have `role = 'admin'`.
+
+Gemini is the enabled default. OpenAI imports require both an API key and
+`OPENAI_IMPORTS_ENABLED=true`; a configured OpenAI key alone does not enable it.
+AgentRouter is no longer supported. The final migration removes its database
+selection constraint; existing AgentRouter jobs must be handled before applying
+that constraint. No provider import auto-publishes.
 
 ## Verification
 
@@ -46,6 +52,21 @@ npm run test:e2e
 
 On Termux, prefix Node/npm commands with `env -u LD_LIBRARY_PATH` if an
 incompatible injected `libc++_shared.so` causes a startup error.
+
+Read-only live configuration checks print environment names/presence and service
+statuses only, without credentials or user data:
+
+```sh
+env -u LD_LIBRARY_PATH node .superpowers/validation/read-only-check.mjs
+```
+
+The rollback-only `.superpowers/validation/rls-smoke.sql` requires staging SQL
+access. It starts a transaction and ends with `rollback`; run it with `psql`
+using a securely configured staging connection and `-v ON_ERROR_STOP=1 -f`.
+Live provider extraction uploads temporary files and uses billable generation,
+so the read-only check verifies model access only. Authenticated Playwright/axe
+requires a supported Linux host, an existing `E2E_AUTH_STORAGE_STATE` file, and
+real published `E2E_PUBLISHED_PAPER_ID`/`E2E_PUBLISHED_VERSION_ID` values.
 
 ## Persistence and integrity
 

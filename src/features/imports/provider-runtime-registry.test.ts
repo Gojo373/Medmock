@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as registryModule from "@/features/imports/server/provider-runtime-registry";
 
 describe("configured provider runtime registry", () => {
-  it("allows Gemini-only operation and adds AgentRouter independently", () => {
+  it("allows Gemini-only operation and requires an explicit OpenAI enable flag", () => {
     const createConfiguredProviderRuntimes = (
       registryModule as typeof registryModule & {
         createConfiguredProviderRuntimes: (
@@ -24,11 +24,29 @@ describe("configured provider runtime registry", () => {
     expect(
       Object.keys(
         createConfiguredProviderRuntimes({
-          AGENT_ROUTER_API_KEY: "agentrouter-key",
-          AGENT_ROUTER_MODEL: "vision-model",
-          AGENT_ROUTER_BASE_URL: "https://agentrouter.example/v1",
+          OPENAI_API_KEY: "openai-key",
+          GEMINI_API_KEY: "gemini-key",
         }),
       ),
-    ).toEqual(["agentrouter"]);
+    ).toEqual(["gemini"]);
+
+    expect(
+      Object.keys(
+        createConfiguredProviderRuntimes({
+          OPENAI_API_KEY: "openai-key",
+          OPENAI_IMPORTS_ENABLED: "false",
+          GEMINI_API_KEY: "gemini-key",
+        }),
+      ),
+    ).toEqual(["gemini"]);
+
+    expect(
+      Object.keys(
+        createConfiguredProviderRuntimes({
+          OPENAI_API_KEY: "openai-key",
+          OPENAI_IMPORTS_ENABLED: "true",
+        }),
+      ),
+    ).toEqual(["openai"]);
   });
 });

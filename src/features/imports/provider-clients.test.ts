@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createAgentRouterProviderRuntime,
   createGeminiProviderRuntime,
   createOpenAIProviderRuntime,
 } from "@/features/imports/server/provider-clients";
@@ -20,71 +19,6 @@ function payload() {
 }
 
 describe("production import provider clients", () => {
-  it("sends AgentRouter images and PDFs through strict inline Responses inputs", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async () =>
-        Response.json({ output_text: JSON.stringify(payload()) }),
-      );
-    const runtime = createAgentRouterProviderRuntime({
-      apiKey: "agentrouter-secret",
-      baseUrl: "https://agentrouter.example/v1",
-      fetcher,
-      model: "vision-model",
-    });
-
-    const imageId = await runtime.uploadFile(
-      new File(["image"], "paper.png", { type: "image/png" }),
-    );
-    await runtime.provider.extract({
-      fileId: imageId,
-      fileName: "paper.png",
-      mimeType: "image/png",
-    });
-    const imageRequest = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
-    expect(fetcher.mock.calls[0][0]).toBe(
-      "https://agentrouter.example/v1/responses",
-    );
-    expect(
-      new Headers(fetcher.mock.calls[0][1]?.headers).get("authorization"),
-    ).toBe("Bearer agentrouter-secret");
-    expect(imageRequest).toMatchObject({
-      model: "vision-model",
-      input: [
-        { role: "system" },
-        {
-          role: "user",
-          content: [
-            { type: "input_image", image_url: "data:image/png;base64,aW1hZ2U=" },
-            { type: "input_text" },
-          ],
-        },
-      ],
-      text: {
-        format: expect.objectContaining({
-          type: "json_schema",
-          strict: true,
-        }),
-      },
-    });
-
-    fetcher.mockClear();
-    const pdfId = await runtime.uploadFile(
-      new File(["%PDF-validation"], "paper.pdf", { type: "application/pdf" }),
-    );
-    await runtime.provider.extract({
-      fileId: pdfId,
-      fileName: "paper.pdf",
-      mimeType: "application/pdf",
-    });
-    const pdfRequest = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
-    expect(pdfRequest.input[1].content[0]).toEqual({
-      type: "input_file",
-      filename: "paper.pdf",
-      file_data: "data:application/pdf;base64,JVBERi12YWxpZGF0aW9u",
-    });
-  });
-
   it("uploads private files and calls OpenAI Responses with server credentials", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

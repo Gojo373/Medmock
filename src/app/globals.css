@@ -284,9 +284,19 @@ input:focus-visible {
   display: none;
 }
 
+.mobile-navigation {
+  display: none;
+}
+
 .language-button {
   min-height: 40px;
   padding: 0 10px;
+}
+
+.auth-language {
+  position: absolute;
+  right: 24px;
+  top: 24px;
 }
 
 .sign-in-link {
@@ -1096,6 +1106,18 @@ input:focus-visible {
 
   .menu-button {
     display: inline-flex;
+  }
+
+  .mobile-navigation {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 8px;
+  }
+
+  .mobile-navigation a {
+    border-radius: 12px;
+    min-height: 44px;
+    padding: 12px;
   }
 
   .sign-in-link {

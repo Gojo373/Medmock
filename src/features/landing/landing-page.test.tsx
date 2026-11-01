@@ -7,6 +7,26 @@ import { LandingPage } from "@/features/landing/landing-page";
 import { LocaleProvider } from "@/features/localization/locale-provider";
 
 describe("LandingPage", () => {
+  it("opens mobile navigation, closes on Escape with restored focus, and closes after selection", async () => {
+    const user = userEvent.setup();
+    render(<LocaleProvider><LandingPage /></LocaleProvider>);
+    const toggle = screen.getByRole("button", { name: "Open navigation" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const mobile = screen.getByRole("navigation", { name: "Mobile navigation" });
+    expect(toggle).toHaveAttribute("aria-controls", mobile.id);
+    const analytics = within(mobile).getByRole("link", { name: "Analytics" });
+    expect(analytics).toHaveAttribute("href", "/dashboard");
+    analytics.focus();
+    await user.keyboard("{Escape}");
+    expect(toggle).toHaveFocus();
+    expect(screen.queryByRole("navigation", { name: "Mobile navigation" })).not.toBeInTheDocument();
+    await user.click(toggle);
+    await user.click(within(screen.getByRole("navigation", { name: "Mobile navigation" })).getByRole("link", { name: "Explore papers" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("links a published Supabase paper version into the student journey", () => {
     render(
       <LocaleProvider initialLocale="en">

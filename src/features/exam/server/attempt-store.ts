@@ -16,7 +16,7 @@ import {
 } from "@/features/exam/domain";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
 import { scoreAttempt } from "@/features/exam/scoring";
-import { materializeAnswers, mergeAnswerEvents } from "@/features/exam/session";
+import { materializeAnswers, materializeQuestionTimes, mergeAnswerEvents } from "@/features/exam/session";
 import {
   createSupabaseAdminClient,
   hasSupabaseServerConfig,
@@ -332,6 +332,7 @@ function submitMemoryAttemptRecord(
     ...record.attempt,
     submittedAt,
     answers: buildAttemptAnswers(record),
+    timeSpentByQuestionMs: materializeQuestionTimes(record.events),
   });
   const result = scoreAttempt(record.paper, finalizedAttempt);
   const response: SubmitAttemptResponse = {
@@ -663,6 +664,7 @@ export async function submitPersistentAttemptRecordWithClient(
     startedAt: loaded.attemptRow.started_at,
     deadlineAt: loaded.attemptRow.deadline_at,
     submittedAt,
+    timeSpentByQuestionMs: materializeQuestionTimes(events),
     answers: loaded.paper.questions.flatMap((question) => {
       const answer = materialized[question.id];
       return answer

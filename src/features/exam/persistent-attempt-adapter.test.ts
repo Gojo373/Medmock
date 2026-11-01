@@ -6,7 +6,7 @@ import * as attemptStore from "@/features/exam/server/attempt-store";
 const attemptId = "00000000-0000-4000-8000-000000000001";
 const userId = "00000000-0000-4000-8000-000000000002";
 
-function productionClient() {
+function productionClient(withUnansweredTimes = false) {
   const attemptRow = {
     id: attemptId,
     user_id: userId,
@@ -45,7 +45,13 @@ function productionClient() {
         error: null,
       })),
       range: vi.fn(async () => ({
-        data: table === "answer_events" ? [eventRow] : [],
+        data: table === "answer_events" ? [
+          eventRow,
+          ...(withUnansweredTimes ? [
+            { ...eventRow, id: "clear-1", event_type: "answer_cleared", selected_option_id: null, client_sequence: 2, time_spent_ms: 2_000 },
+            { ...eventRow, id: "visit-2", question_id: "physics-2", event_type: "time_spent", selected_option_id: null, client_sequence: 3, time_spent_ms: 3_000 },
+          ] : []),
+        ] : [],
         error: null,
       })),
     };
@@ -73,6 +79,13 @@ function productionClient() {
 }
 
 describe("persistent attempt production adapter", () => {
+  it("finalizes cumulative timing for cleared and ultimately unanswered questions", async () => {
+    const { client, rpc } = productionClient(true);
+    await expect(attemptStore.submitPersistentAttemptRecordWithClient(client as never, attemptId, userId, Date.parse("2026-10-28T10:00:02Z")))
+      .resolves.toMatchObject({ ok: true, response: { result: { score: 0, timeSpentByQuestionMs: { "physics-1": 2_000, "physics-2": 3_000 } } } });
+    expect(rpc).toHaveBeenCalledWith("finalize_attempt", expect.objectContaining({ p_expected_event_count: 3, p_result: expect.objectContaining({ timeSpentByQuestionMs: { "physics-1": 2_000, "physics-2": 3_000 } }) }));
+  });
+
   it("normalizes database rows, appends through the RPC, and retries concurrent finalization", async () => {
     const { client, rpc } = productionClient();
     const appendPersistentAttemptEventsWithClient = (

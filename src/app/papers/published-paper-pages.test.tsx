@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
+import { LocaleProvider } from "@/features/localization/locale-provider";
 
 const routeState = vi.hoisted(() => ({
   headers: new Headers(),
@@ -47,12 +48,36 @@ beforeEach(() => {
 });
 
 describe("published paper student routes", () => {
+  it("serializes only paper-summary fields into the public detail client", async () => {
+    const detail = await PaperDetailsPage({
+      params: Promise.resolve({ paperId: publishedPaper.paperId }),
+      searchParams: Promise.resolve({ version: publishedPaper.id }),
+    });
+    expect(detail.props.paper).toEqual({
+      id: publishedPaper.id,
+      paperId: publishedPaper.paperId,
+      title: publishedPaper.title,
+      durationMinutes: publishedPaper.durationMinutes,
+      questionCount: publishedPaper.questions.length,
+    });
+  });
+
+  it("uses the shared Hindi locale on the selected paper detail", async () => {
+    const detail = await PaperDetailsPage({
+      params: Promise.resolve({ paperId: publishedPaper.paperId }),
+      searchParams: Promise.resolve({ version: publishedPaper.id }),
+    });
+    render(<LocaleProvider initialLocale="hi">{detail}</LocaleProvider>);
+    expect(screen.getByRole("heading", { name: publishedPaper.title.hi })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "सख्त मॉक शुरू करें" })).toHaveAttribute("href", `/papers/${publishedPaper.paperId}/mock?version=${publishedPaper.id}`);
+  });
+
   it("opens the selected published version from the detail page", async () => {
     render(
-      await PaperDetailsPage({
+      <LocaleProvider>{await PaperDetailsPage({
         params: Promise.resolve({ paperId: publishedPaper.paperId }),
         searchParams: Promise.resolve({ version: publishedPaper.id }),
-      }),
+      })}</LocaleProvider>,
     );
 
     expect(routeState.loadPublishedPaperVersion).toHaveBeenCalledWith(

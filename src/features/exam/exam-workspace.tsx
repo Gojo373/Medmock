@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { useLocale } from "@/features/localization/locale-provider";
 import type { PaperVersion } from "@/features/exam/domain";
 import {
   createAttemptEventSyncController,
@@ -158,7 +159,7 @@ export function ExamWorkspace({
   mode: ExamMode;
   userId: string;
 }) {
-  const [locale, setLocale] = useState<"en" | "hi">("en");
+  const { locale, toggleLocale } = useLocale();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Saved locally");
   const persistenceRef = useRef<IndexedDbAttemptPersistence | undefined>(undefined);
@@ -548,7 +549,7 @@ export function ExamWorkspace({
     <main className="exam-shell">
       <div data-testid="exam-background" ref={backgroundRef}>
       <header className="exam-topbar">
-        <Link aria-label="MedMock home" href="/">
+        <Link aria-label={locale === "hi" ? "MedMock मुख्य पृष्ठ" : "MedMock home"} href="/">
           <BrandMark compact />
         </Link>
         <div className="exam-title">
@@ -562,7 +563,7 @@ export function ExamWorkspace({
           <Button
             aria-label={text.switchLanguage}
             className="exam-language"
-            onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+            onClick={toggleLocale}
             tone="ghost"
           >
             <Languages aria-hidden="true" size={17} />

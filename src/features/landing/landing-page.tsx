@@ -14,6 +14,7 @@ import {
   TimerReset,
 } from "lucide-react";
 import Link from "next/link";
+import { useId, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -26,6 +27,9 @@ import type { PaperSummary } from "@/features/papers/sample-papers";
 
 export function LandingPage({ papers = samplePapers }: { papers?: PaperSummary[] }) {
   const { copy, locale, toggleLocale } = useLocale();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useId();
+  const menuButton = useRef<HTMLButtonElement>(null);
 
   return (
     <main className="site-shell">
@@ -33,8 +37,13 @@ export function LandingPage({ papers = samplePapers }: { papers?: PaperSummary[]
       <div aria-hidden="true" className="aurora aurora--two" />
       <div aria-hidden="true" className="grid-noise" />
 
-      <header className="site-header">
-        <Link aria-label="MedMock home" href="/">
+      <header className="site-header" onKeyDown={(event) => {
+        if (event.key === "Escape" && menuOpen) {
+          setMenuOpen(false);
+          menuButton.current?.focus();
+        }
+      }}>
+        <Link aria-label={locale === "hi" ? "MedMock मुख्य पृष्ठ" : "MedMock home"} href="/">
           <BrandMark compact />
         </Link>
         <nav aria-label={copy.navigation.aria} className="site-nav">
@@ -48,10 +57,16 @@ export function LandingPage({ papers = samplePapers }: { papers?: PaperSummary[]
           </Button>
           <ThemeToggle />
           <a className="sign-in-link" href="/sign-in">{copy.navigation.signIn}</a>
-          <Button aria-label={copy.navigation.open} className="menu-button" tone="ghost">
+          <Button aria-controls={menuId} aria-expanded={menuOpen} aria-label={copy.navigation.open} className="menu-button" onClick={() => setMenuOpen((value) => !value)} ref={menuButton} tone="ghost">
             <Menu aria-hidden="true" size={20} />
           </Button>
         </div>
+        {menuOpen && <nav aria-label={locale === "hi" ? "मोबाइल नेविगेशन" : "Mobile navigation"} className="mobile-navigation" id={menuId}>
+          <a href="#papers" onClick={() => setMenuOpen(false)}>{copy.navigation.papers}</a>
+          <a href="#workflow" onClick={() => setMenuOpen(false)}>{copy.navigation.howItWorks}</a>
+          <Link href="/dashboard" onClick={() => setMenuOpen(false)}>{copy.navigation.analytics}</Link>
+          <Link href="/sign-in" onClick={() => setMenuOpen(false)}>{copy.navigation.signIn}</Link>
+        </nav>}
       </header>
 
       <section className="hero">
@@ -115,7 +130,7 @@ export function LandingPage({ papers = samplePapers }: { papers?: PaperSummary[]
                 ))}
               </div>
             </div>
-            <aside className="question-palette" aria-label="Question palette preview">
+            <aside className="question-palette" aria-label={locale === "hi" ? "प्रश्न पैलेट झलक" : "Question palette preview"}>
               <div className="palette-summary"><span>45</span><small>{locale === "en" ? "Questions" : "प्रश्न"}</small></div>
               <div className="palette-grid">
                 {Array.from({ length: 20 }, (_, index) => (

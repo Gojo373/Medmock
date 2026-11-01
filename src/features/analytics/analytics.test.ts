@@ -155,6 +155,24 @@ function candidate({
 }
 
 describe("buildPerformanceAnalytics", () => {
+  it("includes cleared and unanswered question time without changing scoring or answered pace", () => {
+    const version = paper();
+    const attempt = AttemptSchema.parse({
+      ...performanceAttempt(version),
+      answers: performanceAttempt(version).answers.slice(0, 1),
+      timeSpentByQuestionMs: { p1: 30_000, p2: 70_000, c1: 20_000 },
+    });
+    const analytics = buildPerformanceAnalytics(version, attempt, { eligibleAttemptCount: 64 });
+    expect(analytics.overall).toMatchObject({
+      attempted: 1, visited: 3, totalTimeMs: 120_000,
+      averageTimePerAnsweredMs: 30_000, averageTimePerVisitedMs: 40_000,
+    });
+    expect(analytics.result).toMatchObject({ score: 4, unanswered: 2 });
+    expect(analytics.subjects.find((item) => item.subject === "physics")?.timeSpentMs).toBe(100_000);
+    expect(analytics.topics.find((item) => item.topic === "Chemical Bonding")?.timeSpentMs).toBe(20_000);
+    expect(analytics.pace.slowest).toEqual({ questionId: "p2", timeSpentMs: 70_000 });
+  });
+
   it("aggregates reviewed results by subject, topic, and answer pace", () => {
     const version = paper();
     const attempt = performanceAttempt(version);
@@ -387,6 +405,9 @@ describe("database-backed dashboard mapping", () => {
           client_sequence: 1,
           time_spent_ms: 42_000,
         },
+        { attempt_id: attempt.id, id: "answer-2", question_id: "p2", event_type: "answer_selected", selected_option_id: "B", occurred_at_ms: Date.parse("2026-10-28T10:02:00Z"), client_sequence: 2, time_spent_ms: 50_000 },
+        { attempt_id: attempt.id, id: "clear-2", question_id: "p2", event_type: "answer_cleared", occurred_at_ms: Date.parse("2026-10-28T10:03:00Z"), client_sequence: 3, time_spent_ms: 60_000 },
+        { attempt_id: attempt.id, id: "visit-c1", question_id: "c1", event_type: "time_spent", occurred_at_ms: Date.parse("2026-10-28T10:04:00Z"), client_sequence: 4, time_spent_ms: 20_000 },
       ],
       leaderboardRows: [
         {
@@ -412,6 +433,8 @@ describe("database-backed dashboard mapping", () => {
     );
     expect(dashboard.currentAttempt.attempt.submittedAt).toBe(submittedAt);
     expect(dashboard.currentAttempt.attempt.answers[0].timeSpentMs).toBe(42_000);
+    expect(dashboard.currentAttempt.attempt.answers).toHaveLength(1);
+    expect(dashboard.currentAttempt.attempt).toHaveProperty("timeSpentByQuestionMs", { p1: 42_000, p2: 60_000, c1: 20_000 });
     expect(dashboard.eligibleAttemptCount).toBe(1);
     expect(dashboard.leaderboard.entries[0].currentUser).toBe(true);
   });

@@ -205,6 +205,8 @@ export const AttemptAnswerSchema = z
   })
   .strict();
 
+const QuestionTimeSchema = z.record(z.string().trim().min(1), z.number().int().nonnegative());
+
 export const AttemptSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -219,6 +221,7 @@ export const AttemptSchema = z
     deadlineAt: z.string().datetime().optional(),
     submittedAt: z.string().datetime().optional(),
     answers: z.array(AttemptAnswerSchema),
+    timeSpentByQuestionMs: QuestionTimeSchema.optional(),
   })
   .strict()
   .superRefine((attempt, context) => {
@@ -279,6 +282,7 @@ export const AttemptResultSchema = z
     dropped: z.number().int().nonnegative(),
     ignored: z.number().int().nonnegative(),
     questionResults: z.array(QuestionResultSchema),
+    timeSpentByQuestionMs: QuestionTimeSchema.optional(),
     subjectTotals: z
       .object({
         physics: SubjectScoreSchema,

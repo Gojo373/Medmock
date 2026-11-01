@@ -4,8 +4,10 @@ import { MoonStar, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useLocale } from "@/features/localization/locale-provider";
 
 export function ThemeToggle() {
+  const { locale } = useLocale();
   const [dark, setDark] = useState(
     () => typeof window !== "undefined" && window.localStorage.getItem("medmock-theme") === "dark",
   );
@@ -25,7 +27,9 @@ export function ThemeToggle() {
 
   return (
     <Button
-      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={locale === "hi"
+        ? dark ? "हल्की थीम चुनें" : "गहरी थीम चुनें"
+        : dark ? "Switch to light theme" : "Switch to dark theme"}
       className="icon-button"
       onClick={toggleTheme}
       tone="ghost"

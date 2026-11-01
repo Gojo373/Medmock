@@ -1,10 +1,12 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Languages, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
+import { useLocale } from "@/features/localization/locale-provider";
 import {
   ReconciledImportSchema,
   type ReconciledImport,
@@ -34,7 +36,7 @@ const copy = {
   hi: {
     title: "हर निकाले गए फ़ील्ड की समीक्षा करें",
     subtitle: "प्रदाता मानों की तुलना करें, हर फ़्लैग हल करें, फिर दो स्थिर संस्करण स्वीकृत करें।",
-    switchLanguage: "Switch review language",
+    switchLanguage: "समीक्षा की भाषा बदलें",
     unresolved: "निर्णय आवश्यक",
     resolved: "हल किया गया",
     confirm: "समीक्षित मान की पुष्टि करें",
@@ -63,7 +65,7 @@ function formatReviewValue(value: unknown) {
 }
 
 export function AdminImportReview({ importId }: { importId: string }) {
-  const [locale, setLocale] = useState<keyof typeof copy>("en");
+  const { locale, toggleLocale } = useLocale();
   const [document, setDocument] = useState<ReconciledImport>();
   const [sources, setSources] = useState<Array<{
     kind: "paper" | "answer_key" | "solution";
@@ -227,13 +229,14 @@ export function AdminImportReview({ importId }: { importId: string }) {
     <main className="admin-review-shell">
       <header className="admin-review-heading">
         <div>
-          <p className="eyebrow">MedMock import review</p>
+          <p className="eyebrow">{locale === "hi" ? "MedMock इम्पोर्ट समीक्षा" : "MedMock import review"}</p>
           <h1>{text.title}</h1>
           <p>{text.subtitle}</p>
+          <Link href="/admin/imports">{locale === "hi" ? "इम्पोर्ट पर वापस जाएँ" : "Return to imports"}</Link>
         </div>
         <Button
           aria-label={text.switchLanguage}
-          onClick={() => setLocale((value) => (value === "en" ? "hi" : "en"))}
+          onClick={toggleLocale}
           tone="ghost"
         >
           <Languages aria-hidden="true" size={17} />
@@ -248,7 +251,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
 
       {document && (
         <div className="admin-review-layout">
-          <section aria-label="Reviewed paper content" className="admin-review-content">
+          <section aria-label={locale === "hi" ? "समीक्षित पेपर सामग्री" : "Reviewed paper content"} className="admin-review-content">
             <GlassPanel>
               <h2>{locale === "en" ? "Source material" : "स्रोत सामग्री"}</h2>
               {sources.map((source) => (
@@ -258,7 +261,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                   rel="noreferrer"
                   target="_blank"
                 >
-                  {source.kind === "paper"
+                  {locale === "hi" ? source.kind === "paper" ? "प्रश्न पत्र खोलें" : source.kind === "answer_key" ? "उत्तर कुंजी खोलें" : "समाधान फ़ाइल खोलें" : source.kind === "paper"
                     ? "Open question paper"
                     : source.kind === "answer_key"
                       ? "Open answer key"
@@ -267,46 +270,47 @@ export function AdminImportReview({ importId }: { importId: string }) {
               ))}
             </GlassPanel>
             <GlassPanel>
-              <h2>{document.paper.title?.[locale] ?? "Untitled paper"}</h2>
-              <p>{document.paper.durationMinutes ?? "—"} minutes · {document.paper.year ?? "—"}</p>
+              <h2>{document.paper.title?.[locale] ?? (locale === "hi" ? "शीर्षक रहित पेपर" : "Untitled paper")}</h2>
+              <p>{document.paper.durationMinutes ?? "—"} {locale === "hi" ? "मिनट" : "minutes"} · {document.paper.year ?? "—"}</p>
               {document.paper.sections.map((section) => (
                 <section key={section.id}>
-                  <h3>{section.title.en ?? "—"} / {section.title.hi ?? "—"}</h3>
-                  <p>{section.subject} · {section.questionNumbers.join(", ")}</p>
+                  <h3><span lang="en">{section.title.en ?? "—"}</span> / <span lang="hi">{section.title.hi ?? "—"}</span></h3>
+                  <p lang="en">{section.subject} · {section.questionNumbers.join(", ")}</p>
                 </section>
               ))}
               {document.paper.questions.map((question) => (
                 <article key={question.sourceNumber}>
-                  <h3>Question {question.sourceNumber}</h3>
-                  <p>{question.stem?.en ?? "—"}</p>
-                  <p>{question.stem?.hi ?? "—"}</p>
-                  <p>{question.subject ?? "—"} · {question.topic ?? "—"} · {question.sectionId ?? "—"}</p>
+                  <h3>{locale === "hi" ? "प्रश्न" : "Question"} {question.sourceNumber}</h3>
+                  <p lang="en">{question.stem?.en ?? "—"}</p>
+                  <p lang="hi">{question.stem?.hi ?? "—"}</p>
+                  <p lang="en">{question.subject ?? "—"} · {question.topic ?? "—"} · {question.sectionId ?? "—"}</p>
                   <ul>
                     {question.options.map((option) => (
                       <li key={option.id}>
-                        {option.id}. {option.text?.en ?? "—"} / {option.text?.hi ?? "—"}
+                        {option.id}. <span lang="en">{option.text?.en ?? "—"}</span> / <span lang="hi">{option.text?.hi ?? "—"}</span>
                       </li>
                     ))}
                   </ul>
-                  <p>{question.solution?.en ?? "—"} / {question.solution?.hi ?? "—"}</p>
-                  <p>Accepted: {question.acceptedOptionIds.join(", ") || "—"}</p>
-                  <p>Marking: +{question.marking.correct} / {question.marking.incorrect}</p>
+                  <p><span lang="en">{question.solution?.en ?? "—"}</span> / <span lang="hi">{question.solution?.hi ?? "—"}</span></p>
+                  <p>{locale === "hi" ? "स्वीकृत उत्तर" : "Accepted"}: {question.acceptedOptionIds.join(", ") || "—"}</p>
+                  <p>{locale === "hi" ? "अंक योजना" : "Marking"}: +{question.marking.correct} / {question.marking.incorrect}</p>
                 </article>
               ))}
               <label>
-                <span>Complete reviewed paper JSON</span>
+                <span>{locale === "hi" ? "पूरा समीक्षित पेपर JSON" : "Complete reviewed paper JSON"}</span>
                 <textarea
-                  aria-label="Complete reviewed paper JSON"
+                  aria-label={locale === "hi" ? "पूरा समीक्षित पेपर JSON" : "Complete reviewed paper JSON"}
+                  lang="en"
                   onChange={(event) => setPaperEditor(event.target.value)}
                   value={paperEditor}
                 />
               </label>
               <Button onClick={saveCompletePaper} tone="secondary">
-                Save complete paper edits
+                {locale === "hi" ? "पेपर के सभी बदलाव सहेजें" : "Save complete paper edits"}
               </Button>
             </GlassPanel>
           </section>
-          <section aria-label="Review flags" className="admin-review-flags">
+          <section aria-label={locale === "hi" ? "समीक्षा फ़्लैग" : "Review flags"} className="admin-review-flags">
             {document.reviewFlags.map((flag) => (
               <GlassPanel className="admin-review-flag" key={flag.id}>
                 <div className="admin-review-flag__heading">
@@ -316,11 +320,11 @@ export function AdminImportReview({ importId }: { importId: string }) {
                     <AlertTriangle aria-hidden="true" />
                   )}
                   <div>
-                    <strong>{flag.path}</strong>
+                    <strong lang="en">{flag.path}</strong>
                     <span>{flag.resolved ? text.resolved : text.unresolved}</span>
                   </div>
                 </div>
-                <p>{flag.message}</p>
+                <p lang="en">{flag.message}</p>
 
                 {flag.providerValues && (
                   <div className="admin-review-values">
@@ -330,7 +334,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                         <pre>{formatReviewValue(flag.providerValues?.[provider])}</pre>
                         {!flag.resolved && flag.providerValues?.[provider] !== undefined && (
                           <Button
-                            aria-label={`Use ${providerLabel(provider)} value`}
+                            aria-label={locale === "hi" ? `${providerLabel(provider)} का मान चुनें` : `Use ${providerLabel(provider)} value`}
                             disabled={pendingFlagId === flag.id}
                             onClick={() =>
                               decide(flag, index === 0 ? "accept_primary" : "accept_secondary")
@@ -357,7 +361,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                     <label>
                       <span>{locale === "en" ? "Manual JSON or text" : "मैनुअल JSON या पाठ"}</span>
                       <textarea
-                        aria-label={`Manual value for ${flag.path}`}
+                        aria-label={locale === "hi" ? `${flag.path} के लिए मैनुअल मान` : `Manual value for ${flag.path}`}
                         onChange={(event) =>
                           setManualValues((values) => ({
                             ...values,
