@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, Languages, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
@@ -114,6 +114,10 @@ export function AdminImportReview({ importId }: { importId: string }) {
     downloadUrl: string;
   }>>([]);
   const [paperEditor, setPaperEditor] = useState("");
+  const editorValue = useRef("");
+  const editorBase = useRef("");
+  const [editorConflict, setEditorConflict] = useState(false);
+  const [savingPaper, setSavingPaper] = useState(false);
   const [canPublish, setCanPublish] = useState(false);
   const [loadState, setLoadState] = useState<"error" | "loading" | "processing" | "ready">("loading");
   const [pendingFlagId, setPendingFlagId] = useState<string>();
@@ -125,6 +129,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
   const [currentRevision, setCurrentRevision] = useState(2);
   const [publishState, setPublishState] = useState<"error" | "idle" | "published" | "publishing">("idle");
   const text = copy[locale];
+  const editorDirty = Boolean(document && paperEditor !== JSON.stringify(document.paper, null, 2));
 
   useEffect(() => {
     let cancelled = false;
@@ -138,9 +143,11 @@ export function AdminImportReview({ importId }: { importId: string }) {
         if (response.ok) {
           const payload = await response.json();
           if (cancelled) return;
-          setDocument(ReconciledImportSchema.parse(payload.document));
+          const loaded = ReconciledImportSchema.parse(payload.document);
+          setDocument(loaded);
           setSources(Array.isArray(payload.sources) ? payload.sources : []);
-          setPaperEditor(JSON.stringify(payload.document.paper, null, 2));
+          editorValue.current = editorBase.current = JSON.stringify(loaded.paper, null, 2);
+          setPaperEditor(editorValue.current);
           setCanPublish(Boolean(payload.canPublish));
           setLoadState("ready");
           return;
@@ -207,7 +214,17 @@ export function AdminImportReview({ importId }: { importId: string }) {
       });
       if (!response.ok) throw new Error("Decision failed");
       const payload = await response.json();
-      setDocument(ReconciledImportSchema.parse(payload.reviewed));
+      const reviewed = ReconciledImportSchema.parse(payload.reviewed);
+      const nextEditor = JSON.stringify(reviewed.paper, null, 2);
+      if (editorValue.current === editorBase.current) {
+        editorValue.current = nextEditor;
+        setPaperEditor(nextEditor);
+      } else if (nextEditor !== editorBase.current) {
+        setEditorConflict(true);
+      }
+      editorBase.current = nextEditor;
+      setDocument(reviewed);
+      setApproved(false);
       setCanPublish(Boolean(payload.canPublish));
     } catch {
       setDecisionError(true);
@@ -217,6 +234,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
   }
 
   async function saveCompletePaper() {
+    if (editorConflict || pendingFlagId || savingPaper) return;
     let paper: unknown;
     try {
       paper = JSON.parse(paperEditor);
@@ -226,6 +244,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
     }
 
     setDecisionError(false);
+    setSavingPaper(true);
     try {
       const response = await fetch(`/api/imports/${importId}/review`, {
         method: "PATCH",
@@ -237,15 +256,19 @@ export function AdminImportReview({ importId }: { importId: string }) {
       const payload = await response.json();
       const reviewed = ReconciledImportSchema.parse(payload.reviewed);
       setDocument(reviewed);
-      setPaperEditor(JSON.stringify(reviewed.paper, null, 2));
+      editorValue.current = editorBase.current = JSON.stringify(reviewed.paper, null, 2);
+      setPaperEditor(editorValue.current);
+      setApproved(false);
       setCanPublish(Boolean(payload.canPublish));
     } catch {
       setDecisionError(true);
+    } finally {
+      setSavingPaper(false);
     }
   }
 
   async function publish() {
-    if (!approved || !canPublish) return;
+    if (!approved || !canPublish || paperEditor !== editorBase.current || editorConflict || pendingFlagId || savingPaper) return;
     setPublishState("publishing");
     try {
       const response = await fetch(`/api/imports/${importId}/publish`, {
@@ -315,7 +338,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
               <p>{document.paper.durationMinutes ?? "—"} {locale === "hi" ? "मिनट" : "minutes"} · {document.paper.year ?? "—"}</p>
               {document.paper.sections.map((section) => (
                 <section key={section.id}>
-                  <h3><span lang="en">{section.title.en ?? "—"}</span> / <span lang="hi">{section.title.hi ?? "—"}</span></h3>
+                  <h3><span lang="en">{section.title?.en ?? "—"}</span> / <span lang="hi">{section.title?.hi ?? "—"}</span></h3>
                   <p lang="en">{section.subject} · {section.questionNumbers.join(", ")}</p>
                 </section>
               ))}
@@ -342,11 +365,16 @@ export function AdminImportReview({ importId }: { importId: string }) {
                 <textarea
                   aria-label={locale === "hi" ? "पूरा समीक्षित पेपर JSON" : "Complete reviewed paper JSON"}
                   lang="en"
-                  onChange={(event) => setPaperEditor(event.target.value)}
+                  disabled={savingPaper}
+                  onChange={(event) => { editorValue.current = event.target.value; setPaperEditor(event.target.value); setApproved(false); }}
                   value={paperEditor}
                 />
               </label>
-              <Button onClick={saveCompletePaper} tone="secondary">
+              {editorConflict && <div role="alert">
+                <p>{locale === "hi" ? "अनसहेजे बदलाव नए समीक्षा निर्णय से टकराते हैं। आपके बदलाव सुरक्षित हैं; उन्हें सहेजने पर संबंधित फ़्लैग की फिर समीक्षा करनी होगी।" : "Unsaved edits overlap a newer review decision. Your edits are preserved; saving them will require review of affected flags again."}</p>
+                <Button onClick={() => setEditorConflict(false)} tone="secondary">{locale === "hi" ? "मेरे बदलाव रखें और फिर समीक्षा करें" : "Keep my edits for renewed review"}</Button>
+              </div>}
+              <Button disabled={editorConflict || Boolean(pendingFlagId) || savingPaper} onClick={saveCompletePaper} tone="secondary">
                 {locale === "hi" ? "पेपर के सभी बदलाव सहेजें" : "Save complete paper edits"}
               </Button>
             </GlassPanel>
@@ -376,7 +404,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                         {!flag.resolved && flag.providerValues?.[provider] !== undefined && (
                           <Button
                             aria-label={locale === "hi" ? `${providerLabel(provider)} का मान चुनें` : `Use ${providerLabel(provider)} value`}
-                            disabled={pendingFlagId === flag.id}
+                            disabled={Boolean(pendingFlagId) || savingPaper}
                             onClick={() =>
                               decide(flag, index === 0 ? "accept_primary" : "accept_secondary")
                             }
@@ -393,7 +421,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                 {!flag.resolved && (
                   <div className="admin-review-actions">
                     <Button
-                      disabled={pendingFlagId === flag.id}
+                      disabled={Boolean(pendingFlagId) || savingPaper}
                       onClick={() => decide(flag, "confirm")}
                       tone="ghost"
                     >
@@ -413,7 +441,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                       />
                     </label>
                     <Button
-                      disabled={pendingFlagId === flag.id || !manualValues[flag.id]?.trim()}
+                      disabled={Boolean(pendingFlagId) || savingPaper || !manualValues[flag.id]?.trim()}
                       onClick={() => decide(flag, "manual_value")}
                       tone="secondary"
                     >
@@ -454,7 +482,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
               <label>
                 <input
                   checked={approved}
-                  disabled={!canPublish}
+                  disabled={!canPublish || editorConflict || editorDirty || Boolean(pendingFlagId) || savingPaper}
                   onChange={(event) => setApproved(event.target.checked)}
                   type="checkbox"
                 />
@@ -464,6 +492,7 @@ export function AdminImportReview({ importId }: { importId: string }) {
                 disabled={
                   !canPublish ||
                   !approved ||
+                  editorDirty || editorConflict || Boolean(pendingFlagId) || savingPaper ||
                   !paperId.trim() ||
                   originalRevision === currentRevision ||
                   publishState === "publishing"

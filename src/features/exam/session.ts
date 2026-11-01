@@ -51,6 +51,8 @@ export type ExamSessionState = {
   markedForReview: string[];
   feedbackByQuestion: Record<string, PracticeFeedback>;
   eventQueue: AnswerEvent[];
+  rejectedEvents?: AnswerEvent[];
+  syncNotice?: "late_events" | "server_submitted";
   nextClientSequence: number;
   timeSpentByQuestionMs: Record<string, number>;
   questionEnteredAtMs: number;
@@ -234,9 +236,10 @@ export function examSessionReducer(
   }
 
   if (action.type === "TICK") {
+    if (state.status === "finalizing" || state.status === "submitted") return state;
     const remainingMs = getRemainingTimeMs(state.deadlineAtMs, action.nowMs);
 
-    if (remainingMs === 0 && state.status !== "submitted") {
+    if (remainingMs === 0) {
       const expiryAt = state.deadlineAtMs;
       const timedState = recordCurrentQuestionTime(
         state,
@@ -255,7 +258,11 @@ export function examSessionReducer(
     return { ...state, nowMs: action.nowMs, remainingMs };
   }
 
-  if (state.status === "submitted") {
+  if (action.type === "CONFIRM_SUBMIT") {
+    return { ...state, status: "submitted", submittedAt: action.submittedAt, submissionReason: state.submissionReason ?? "manual" };
+  }
+
+  if (state.status === "submitted" || state.status === "finalizing") {
     return state;
   }
 
@@ -398,19 +405,6 @@ export function examSessionReducer(
       ...state,
       status: "active",
       questionEnteredAtMs: action.occurredAt,
-    };
-  }
-
-  if (
-    action.type === "CONFIRM_SUBMIT" &&
-    (state.status === "submit_pending" || state.status === "finalizing")
-  ) {
-    return {
-      ...state,
-      status: "submitted",
-      submissionReason:
-        state.status === "finalizing" ? state.submissionReason : "manual",
-      submittedAt: action.submittedAt,
     };
   }
 

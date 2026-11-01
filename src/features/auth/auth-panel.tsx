@@ -6,8 +6,10 @@ import { useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { useLocale } from "@/features/localization/locale-provider";
+import { safeReturnDestination } from "@/lib/auth/return-destination";
 
-export function AuthPanel() {
+export function AuthPanel({ next }: { next?: string }) {
+  const destination = next === undefined ? undefined : safeReturnDestination(next);
   const id = useId();
   const { copy, locale } = useLocale();
   const [status, setStatus] = useState<"error" | "idle" | "loading" | "sent">("idle");
@@ -28,7 +30,7 @@ export function AuthPanel() {
       const response = await fetch("/api/auth/otp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...(destination ? { next: destination } : {}) }),
       });
 
       setStatus(response.ok ? "sent" : "error");
@@ -45,7 +47,7 @@ export function AuthPanel() {
       <p className="auth-panel__description">{copy.auth.description}</p>
       <a
         className="auth-panel__google button button--secondary"
-        href="/api/auth/google"
+        href={destination ? `/api/auth/google?next=${encodeURIComponent(destination)}` : "/api/auth/google"}
       >
         <span aria-hidden="true" className="google-mark">G</span>
         {copy.auth.google}

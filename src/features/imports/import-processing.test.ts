@@ -107,6 +107,32 @@ function runtime(id: "openai" | "gemini") {
 }
 
 describe("durable import processing", () => {
+  it.each([false, true])("prioritizes secondary backed official entries and flags conflicting key extractions (conflict=%s)", async (conflict) => {
+    const store = repository();
+    const openai = runtime("openai");
+    const gemini = runtime("gemini");
+    vi.mocked(openai.provider.extract).mockImplementation(async (source) => ({ ...extracted("openai", source), officialAnswerKeyEntries: conflict ? [{ sourceNumber: "1", acceptedOptionIds: ["A"] }] : [] }));
+    vi.mocked(gemini.provider.extract).mockImplementation(async (source) => ({ ...extracted("gemini", source), officialAnswerKeyEntries: [{ sourceNumber: "1", acceptedOptionIds: ["B"] }] }));
+    const reviewed = await processClaimedImportJob({ id: "import-1", providerSelection: "both", processingAttempts: 1, claimToken: "worker" }, store, { openai, gemini });
+    if (conflict) {
+      expect(reviewed.paper.questions[0].answerKeyProvenance.source).not.toBe("official");
+      expect(reviewed.reviewFlags).toEqual(expect.arrayContaining([expect.objectContaining({ code: "provider_conflict", path: "questions.1.acceptedOptionIds", resolved: false })]));
+    } else {
+      expect(reviewed.paper.questions[0]).toMatchObject({ acceptedOptionIds: ["B"], answerKeyProvenance: { source: "official", reference: "key-file" } });
+    }
+  });
+
+  it.each([false, true])("normalizes unbacked model provenance with attachment=%s", async (attached) => {
+    const store = repository({ listFiles: vi.fn().mockResolvedValue(attached ? files : files.filter((file) => file.kind !== "answer_key")) });
+    const openai = runtime("openai");
+    vi.mocked(openai.provider.extract).mockImplementation(async (source) => {
+      const document = extracted("openai", source);
+      document.paper.questions[0].answerKeyProvenance = { source: "official", reference: "invented-reference" };
+      return document;
+    });
+    const reviewed = await processClaimedImportJob({ id: "import-1", providerSelection: "openai", processingAttempts: 1, claimToken: "worker" }, store, { openai });
+    expect(reviewed.paper.questions[0].answerKeyProvenance).toEqual({ source: "provider" });
+  });
   it("applies official provenance only to answers extracted from the answer-key attachment", async () => {
     const job: ClaimedImportJob = {
       id: "import-1",

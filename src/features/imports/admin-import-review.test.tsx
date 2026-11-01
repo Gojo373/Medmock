@@ -36,6 +36,25 @@ const reviewDocument = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminImportReview", () => {
+  it.each([false, true])("keeps complete-paper edits consistent with decisions (dirty=%s)", async (dirty) => {
+    const before = { ...reviewDocument, reviewFlags: [{ ...reviewDocument.reviewFlags[0], path: "paper.title.en" }] };
+    const reviewed = { ...before, paper: { ...before.paper, title: { en: "Reviewed title", hi: "नीट" } }, reviewFlags: before.reviewFlags.map((flag) => ({ ...flag, resolved: true })) };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ document: before, canPublish: false })).mockResolvedValueOnce(Response.json({ reviewed, canPublish: true })));
+    const user = userEvent.setup();
+    render(<AdminImportReview importId="editor-sync" />);
+    const editor = await screen.findByRole("textbox", { name: "Complete reviewed paper JSON" });
+    const unsaved = JSON.stringify({ ...before.paper, year: 2024 });
+    if (dirty) fireEvent.change(editor, { target: { value: unsaved } });
+    await user.click(screen.getByRole("button", { name: "Use Gemini value" }));
+    await screen.findByText("Reviewed title");
+    if (dirty) {
+      expect(editor).toHaveValue(unsaved);
+      expect(screen.getByRole("alert")).toHaveTextContent("Unsaved edits overlap a newer review decision");
+      expect(screen.getByRole("button", { name: "Save complete paper edits" })).toBeDisabled();
+    } else {
+      expect(JSON.parse((editor as HTMLTextAreaElement).value).title.en).toBe("Reviewed title");
+    }
+  });
   it.each(["en", "hi"] as const)("annotates loaded-review comparisons independently of the %s UI language", async (locale) => {
     const conflict = reviewDocument.reviewFlags[0];
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({

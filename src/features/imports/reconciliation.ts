@@ -78,10 +78,26 @@ function collectMissingPaths(paper: ExtractionPaper) {
   if (!paper.durationMinutes) paths.push("paper.durationMinutes");
   if (paper.questions.length === 0) paths.push("paper.questions");
 
+  const sourceNumbers = paper.questions.map((question) => question.sourceNumber);
+  if (new Set(sourceNumbers).size !== sourceNumbers.length) paths.push("paper.questions");
+  const sectionIds = paper.sections.map((section) => section.id);
+  if (new Set(sectionIds).size !== sectionIds.length) paths.push("paper.sections");
+  for (const section of paper.sections) {
+    const base = `paper.sections.${section.id}`;
+    if (!section.title?.en) paths.push(`${base}.title.en`);
+    if (!section.title?.hi) paths.push(`${base}.title.hi`);
+    if (!section.questionNumbers.length || new Set(section.questionNumbers).size !== section.questionNumbers.length ||
+      section.questionNumbers.some((number) => !paper.questions.some((question) => question.sourceNumber === number && question.sectionId === section.id && question.subject === section.subject))) {
+      paths.push(`${base}.questionNumbers`);
+    }
+    if (section.selectionLimit && section.selectionLimit > section.questionNumbers.length) paths.push(`${base}.selectionLimit`);
+  }
+
   for (const question of paper.questions) {
     const base = "questions." + question.sourceNumber;
 
     if (!question.sectionId) paths.push(base + ".sectionId");
+    if (paper.sections.length && !paper.sections.some((section) => section.id === question.sectionId && section.questionNumbers.includes(question.sourceNumber))) paths.push(base + ".sectionId");
     if (!question.subject) paths.push(base + ".subject");
     if (!question.topic) paths.push(base + ".topic");
     if (!question.stem?.en) paths.push(base + ".stem.en");
@@ -252,8 +268,8 @@ export function reconcileExtractions(
     }
     for (const [field, getter] of [
       ["subject", (document: ExtractionDocument) => sectionFrom(document)?.subject],
-      ["title.en", (document: ExtractionDocument) => sectionFrom(document)?.title.en],
-      ["title.hi", (document: ExtractionDocument) => sectionFrom(document)?.title.hi],
+      ["title.en", (document: ExtractionDocument) => sectionFrom(document)?.title?.en],
+      ["title.hi", (document: ExtractionDocument) => sectionFrom(document)?.title?.hi],
       ["questionNumbers", (document: ExtractionDocument) => sectionFrom(document)?.questionNumbers],
       ["selectionLimit", (document: ExtractionDocument) => sectionFrom(document)?.selectionLimit ?? null],
     ] as const) {
@@ -378,6 +394,31 @@ export type ReviewDecision = {
 
 export type ReviewFieldEdit = { path: string; value: unknown };
 
+function reviewedValue(paper: ExtractionPaper, path: string): unknown {
+  const segments = path.split(".");
+  let value: unknown = paper;
+  if (segments[0] === "paper") segments.shift();
+  for (const segment of segments) {
+    if (Array.isArray(value)) {
+      value = value.find((item) => item?.id === segment || item?.sourceNumber === segment);
+    } else if (value && typeof value === "object") {
+      value = (value as Record<string, unknown>)[segment];
+    } else return undefined;
+  }
+  return value;
+}
+
+function invalidateChangedDecisions(before: ExtractionPaper, draft: ReconciledImport) {
+  if (stableValue(before) === stableValue(draft.paper)) return;
+  for (const flag of draft.reviewFlags) {
+    const path = flag.code === "low_confidence" ? flag.path.split(".confidence")[0] : flag.path;
+    if (flag.code === "admin_review" || stableValue(reviewedValue(before, path)) !== stableValue(reviewedValue(draft.paper, path))) {
+      flag.resolved = false;
+    }
+  }
+  addContentReviewFlags(draft.paper, draft.reviewFlags);
+}
+
 export function applyReviewEdits(
   draftInput: ReconciledImport,
   edits: ReviewFieldEdit[],
@@ -392,6 +433,7 @@ export function applyReviewEdits(
     setReviewedValue(draft, edit.path, edit.value);
   }
 
+  invalidateChangedDecisions(draftInput.paper, draft);
   return ReconciledImportSchema.parse(draft);
 }
 
@@ -469,6 +511,7 @@ export function applyReviewDecisions(
   const draft = structuredClone(draftInput);
 
   for (const decision of decisions) {
+    const previousPaper = structuredClone(draft.paper);
     const flag = draft.reviewFlags.find((item) => item.id === decision.flagId);
     if (!flag) throw new Error("Review flag was not found.");
     if (
@@ -507,6 +550,7 @@ export function applyReviewDecisions(
       }
     }
 
+    invalidateChangedDecisions(previousPaper, draft);
     flag.resolved = true;
   }
 
@@ -576,8 +620,8 @@ export function buildPaperVersionFromImport(
         id: section.id,
         subject: section.subject,
         title: {
-          en: section.title.en!,
-          hi: section.title.hi!,
+          en: section.title!.en!,
+          hi: section.title!.hi!,
         },
         questionIds: section.questionNumbers.map(
           (sourceNumber) => metadata.id + ":q:" + sourceNumber,

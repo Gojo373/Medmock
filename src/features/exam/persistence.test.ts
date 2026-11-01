@@ -19,6 +19,15 @@ function event(id: string, clientSequence: number): AnswerEvent {
 }
 
 describe("attempt event synchronization", () => {
+  it("repairs unsent legacy fractional timing before reconnection", () => {
+    const state = createExamSession({ attemptId: "legacy", paper: sampleExamPaper, mode: "mock", nowMs: 1_000, deadlineAtMs: 10_000 });
+    const normalized = persistence.normalizePersistedExamSession({ ...state, questionEnteredAtMs: 1_000.5,
+      timeSpentByQuestionMs: { "physics-1": 20.5 }, eventQueue: [{ ...event("fractional", 1), occurredAt: 1_021.5, timeSpentMs: 20.5 }] });
+    expect(normalized.eventQueue[0].occurredAt).toBe(1_022);
+    expect(normalized.eventQueue[0].timeSpentMs).toBe(21);
+    expect(normalized.questionEnteredAtMs).toBe(1_001);
+    expect(normalized.timeSpentByQuestionMs["physics-1"]).toBe(21);
+  });
   it("drains offline events in ordered batches of at most 500", async () => {
     let queue = Array.from({ length: 501 }, (_, index) =>
       event(`event-${index + 1}`, index + 1),

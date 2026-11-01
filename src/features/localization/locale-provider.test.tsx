@@ -14,6 +14,19 @@ import { LocaleProvider } from "@/features/localization/locale-provider";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("shared UI locale", () => {
+  it.each(["landing", "exam"])("keeps the %s screen usable when all browser preference storage is denied", async (screenName) => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new DOMException("Denied", "SecurityError"); });
+    const user = userEvent.setup();
+    render(<LocaleProvider>{screenName === "landing" ? <LandingPage /> : <ExamWorkspace mode="mock" paper={sampleExamPaper} userId="denied-storage-student" />}</LocaleProvider>);
+    await user.click(screen.getByRole("button", { name: /Switch to (dark|light) theme/ }));
+    expect(screen.getByRole("button", { name: /Switch to (dark|light) theme/ })).toBeInTheDocument();
+    if (screenName === "exam") {
+      await user.click(screen.getByRole("button", { name: "Submit test" }));
+      expect(screen.getByRole("dialog")).toBeVisible();
+    }
+  });
   it("still switches language when the browser refuses preference storage", async () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Quota exceeded", "QuotaExceededError"); });
     const user = userEvent.setup();

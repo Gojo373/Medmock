@@ -5,6 +5,18 @@ import type {
 } from "@/features/exam/session";
 import { getRemainingTimeMs } from "@/features/exam/timer";
 
+export function isLocalAttemptId(attemptId: string) {
+  return attemptId.startsWith("local:") || attemptId.startsWith("local-");
+}
+
+export async function ensureServerAttempt({ getAttemptId, connect }: {
+  getAttemptId: () => string;
+  connect: () => Promise<boolean>;
+}) {
+  if (!isLocalAttemptId(getAttemptId())) return true;
+  return await connect() && !isLocalAttemptId(getAttemptId());
+}
+
 export type AttemptRecoveryIdentity = ExamRecoveryIdentity & {
   localAttemptId: string;
   generationStorageKey: string;
@@ -137,7 +149,7 @@ export function createRetryingFinalizer({
   schedule,
   cancel,
 }: {
-  finalize: () => Promise<boolean>;
+  finalize: () => Promise<boolean | "blocked">;
   retryDelayMs: number;
   schedule: typeof setTimeout;
   cancel: typeof clearTimeout;

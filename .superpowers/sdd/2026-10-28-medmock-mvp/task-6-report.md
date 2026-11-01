@@ -388,3 +388,183 @@ unchanged; Task 6 is not marked complete.
 Files changed in this follow-up: `src/features/imports/admin-import-review.tsx`,
 `src/features/imports/admin-import-review.test.tsx`, this report, and the
 progress ledger. Commit subject: `fix: localize loaded import review explanations`.
+
+## Final whole-branch fix wave — 2026-11-01
+
+Scope: the complete queue in `final-fix-findings-2026-11-01.md` against
+`3309bb8`: 2 Critical, 6 Important, 3 Minor. All eleven findings were accepted
+and implemented locally. No subagents, external writes, deployment, publication,
+auth changes, billable provider requests, or database changes were performed.
+`AGENTS.md` is untouched. Task 6 remains open for the existing external gates.
+
+### Per-finding RED → GREEN evidence
+
+1. **Integral server clock (Critical).**
+   `env -u LD_LIBRARY_PATH npm test -- src/features/exam/client-attempt.test.ts`
+   first exited 1 because the required clock/synchronization boundary was absent;
+   after implementation, 1/1 passed. The regression uses a 101 ms round trip and
+   validates the generated answer against the production event schema during
+   synchronization. The browser now uses the rounded shared clock offset.
+   A later legacy-snapshot regression also reproduced persisted `.5` timestamps,
+   durations, and entry times; all are normalized to integral milliseconds.
+2. **Terminal expiry synchronization (Critical).** The same focused command
+   next produced 4 failures / 1 pass: repeated finalizing ticks appended events,
+   and explicit rejected/submitted/blocked outcomes were absent. Expiry freezes
+   its event set once. The sync controller preserves rejected late events in a
+   saved snapshot before removing them from its pending queue, acknowledges
+   accepted/duplicate events, caches permanent failures, and recovers submitted
+   results through the idempotent submit endpoint. Unexpected no-progress replies
+   cannot produce an unbounded drain loop. Late receipts never modify server
+   scoring rules; bilingual UI explains that results use accepted server answers.
+3. **Local identity (Important).**
+   `env -u LD_LIBRARY_PATH npm test -- src/features/exam/recovery.test.ts`
+   produced 1 failure / 4 passes because the shared local-ID predicate was absent.
+   Generated `local:` and legacy `local-` identities now share one predicate,
+   and submission connects/rebinds first and reads the current server ID.
+   Findings 1–3 then passed together with:
+   `env -u LD_LIBRARY_PATH npm test -- src/features/exam/client-attempt.test.ts src/features/exam/persistence.test.ts src/features/exam/recovery.test.ts src/features/exam/session.test.ts`
+   → 4 files / 21 tests passed (26.97s).
+4. **Review editor consistency (Important).**
+   `env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/features/imports/admin-import-review.test.tsx src/features/imports/workflow.test.ts -t 'consistent with decisions|reopens decisions'`
+   → 3 failed / 30 skipped. Clean editors now track saved decisions. Dirty
+   editors retain their text and show a bilingual conflict notice; saving requires
+   the explicit “Keep my edits for renewed review” action. Server edits reopen
+   affected flags and the overall admin review, and publication requires saved
+   content plus fresh approval. Concurrent decision/save controls are disabled.
+5. **Sections (Important).**
+   `env -u LD_LIBRARY_PATH npm test -- src/features/imports/workflow.test.ts -t 'section translations|structurally invalid'`
+   → 3 failed / 21 skipped: null titles/translations rejected parsing and invalid
+   section membership could publish. Null/blank section translations now become
+   reviewable missing fields. Publication validates both translations, unique
+   sections/questions, section membership/subject consistency, and selection
+   limits. Legacy imports without explicit sections retain generated sections.
+6. **Backed official keys (Important).**
+   `env -u LD_LIBRARY_PATH npm test -- src/features/imports/import-processing.test.ts`
+   → 4 failed / 4 passed. Raw model provenance now normalizes to `provider`.
+   Only entries backed by the separately uploaded answer-key attachment enter
+   the canonical official-key map, regardless of which provider extracted them.
+   Conflicting official extractions retain an unresolved error flag and do not
+   acquire official provenance. Provider suggestions are not promoted.
+   Findings 4–6 passed with:
+   `env -u LD_LIBRARY_PATH npm test -- src/features/imports/import-processing.test.ts src/features/imports/workflow.test.ts src/features/imports/admin-import-review.test.tsx`
+   → 3 files / 44 tests passed (54.34s).
+7. **Production browser prerequisites (Important).**
+   `env -u LD_LIBRARY_PATH npm test -- src/test/browser-fixtures.test.ts`
+   first exited 1 at the missing fixture-validation module, then passed 2/2
+   (13.74s). Fixtures reject absent state files and placeholder publication IDs.
+   Playwright now defines real published mock answer/reload/offline reconnect/
+   submit/result journeys, practice reveal/locking/reload, correct unauthenticated
+   version destinations, protected dashboard axe, and optional authenticated
+   admin/review axe. Actual URL, status, and screen assertions prevent redirects
+   or 404s from passing. The suite uses the production server after build or an
+   explicit staging base URL. Linux execution remains required.
+8. **Denied storage (Important).**
+   `env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/features/localization/locale-provider.test.tsx -t 'all browser'`
+   → 2 failed / 7 skipped, at theme and exam generation reads. Guarded preference
+   read/write/remove helpers now provide an in-memory fallback; both complete
+   screens and theme toggling work when all localStorage operations throw.
+9. **Hindi fallbacks (Minor).**
+   `env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/app/fallback-screens.test.tsx`
+   → 3 failed, including both English-only fallback/accessibility checks. Root
+   error and not-found screens now consume the shared locale and translate text,
+   home/library links, and Retry. An initial test harness import/nested-provider
+   error was corrected before the behavioral RED was recorded.
+10. **Auth return destination (Minor).**
+    `env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/app/api/auth/return-destination.test.ts src/features/auth/auth-panel.test.tsx`
+    → 4 failed / 1 passed. The sign-in page forwards validated `next` through the
+    shell/panel into both Google and OTP callbacks. A shared internal-destination
+    validator rejects external, scheme-relative, backslash, and control-character
+    redirects; failed auth redirects retain the validated return destination.
+11. **Refetch retry (Minor).** The fallback command above also demonstrated a
+    transient loader never being called again. Root error now uses installed
+    Next 16 `retry`, which refetches and rerenders; the regression resolves the
+    second loader call and replaces the fallback. `error` is safely narrowed from
+    `unknown`. Installed error/not-found/redirect/Playwright docs were read.
+    Findings 8–11 passed with:
+    `env -u LD_LIBRARY_PATH npm test -- src/app/fallback-screens.test.tsx src/features/localization/locale-provider.test.tsx src/app/api/auth/return-destination.test.ts src/features/auth/auth-panel.test.tsx src/app/api/auth/callback/route.test.ts`
+    → 5 files / 18 tests passed (40.93s).
+
+### Self-review and additional production evidence
+
+- A production API/controller regression accepts one answer, reconnects after
+  the 30-second receipt grace with a duplicate plus a new late answer, preserves
+  the rejected event, and finalizes the unchanged accepted score. A second
+  controller then receives `attempt_submitted` and recovers the identical result
+  without discarding pending evidence. Command:
+  `env -u LD_LIBRARY_PATH npm test -- src/features/exam/attempt-api.test.ts src/features/exam/client-attempt.test.ts src/features/exam/recovery.test.ts`
+  → 3 files / 22 tests passed (24.51s).
+- A production-hook component test bypasses the normal test-only short circuit
+  explicitly, replacing only storage and HTTP boundaries. It verifies failed
+  initial creation → local answer → confirmation → server-ID submission. Its
+  lost-acknowledgement case first failed with `Repeated terminal sync loop`;
+  guarding the transition to finalizing fixed the loop while retaining pending
+  local evidence. `env -u LD_LIBRARY_PATH DEBUG_PRINT_LIMIT=0 npm test -- src/features/exam/workspace-sync.test.tsx`
+  → initial 1 failed / 1 passed.
+- `env -u LD_LIBRARY_PATH npm test -- src/features/exam/persistence.test.ts src/features/imports/workflow.test.ts -t 'legacy fractional|earlier decisions'`
+  → 2 failed / 27 skipped. Legacy fractional recovery and invalidating earlier
+  decisions after later review changes were then fixed.
+- Combined refinement GREEN:
+  `env -u LD_LIBRARY_PATH npm test -- src/features/exam/workspace-sync.test.tsx src/features/exam/persistence.test.ts src/features/imports/workflow.test.ts`
+  → 3 files / 31 tests passed (33.68s).
+- Self-review added reconnection draining after a previously successful initial
+  connection, checked mobile hidden-palette assertions and exact browser labels,
+  and made privacy browser checks wait for their persisted server response.
+- An intermediate type-check caught test fixture narrowing and an obsolete
+  submitted-state comparison; an intermediate lint caught ref access during
+  render and an unnecessary callback dependency. These were corrected before
+  the final gates. The full final gate evidence is recorded below.
+
+### Final unchanged-source verification
+
+All final commands ran against the finished application/test source. Subsequent
+changes only record these results in the report, ledger, handoff, and plan.
+
+```text
+env -u LD_LIBRARY_PATH npm test
+→ exit 0
+  Test Files  34 passed (34)
+       Tests  171 passed (171)
+    Duration  392.31s
+
+env -u LD_LIBRARY_PATH npm run lint
+→ exit 0; no errors or warnings
+
+env -u LD_LIBRARY_PATH npm run typecheck
+→ exit 0
+
+env -u LD_LIBRARY_PATH npm run build
+→ exit 0; Next.js 16.4.3 webpack
+  Compiled successfully in 81s
+  Finished TypeScript in 69s
+  Generated static pages 14/14
+  All dynamic routes and Proxy compiled; sign-in now reads its return destination.
+
+env -u LD_LIBRARY_PATH npm run test:e2e
+→ exit 1 before test discovery
+  Error: Unsupported platform: android
+      at computeDefaultCacheDirectory (node_modules/playwright-core/lib/coreBundle.js:34016:9)
+      at defaultCacheDirectory (node_modules/playwright-core/lib/coreBundle.js:34019:37)
+      at defaultRegistryDirectory (node_modules/playwright-core/lib/coreBundle.js:34022:37)
+  Node.js v24.22.1
+
+git diff --check
+→ exit 0
+```
+
+Self-review outcome: all eleven locally actionable queue items are addressed;
+no local test/lint/type/build failures remain. The extra production-hook check
+also closed the transient terminal-state render loop discovered in this wave.
+Preserved invariants include bilingual UI/accessibility, immutable publication,
+explicit admin approval, backed official-key precedence, attempt idempotency,
+server deadlines, accepted-state scoring, and ranking/privacy policy.
+
+Residual concerns: actual Linux authenticated browser/axe execution remains
+unverified. The previously documented staging SQL/RLS/final provider-removal
+migration, deployed auth/cookie/upload/cron/Vercel checks, approved representative
+provider extraction, and 500-concurrent-attempt load evidence are still required.
+This wave did not rerun or mutate those external systems. Retained permanent
+sync-conflict evidence stays on the user's device; no support/export workflow
+was added. Task 6 and production readiness remain incomplete.
+
+Commit subject: `fix: resolve final attempt and review integrity findings`.
+`AGENTS.md` and private environment files are excluded.

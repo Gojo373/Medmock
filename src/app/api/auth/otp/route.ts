@@ -3,8 +3,9 @@ import { z } from "zod";
 
 import { logServerEvent } from "@/lib/server/logger";
 import { createSupabaseRouteClient } from "@/lib/supabase/route-client";
+import { safeReturnDestination } from "@/lib/auth/return-destination";
 
-const RequestSchema = z.object({ email: z.string().trim().email() }).strict();
+const RequestSchema = z.object({ email: z.string().trim().email(), next: z.string().max(2048).optional() }).strict();
 
 export async function POST(request: NextRequest) {
   const payload = await request.json().catch(() => null);
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     const origin = process.env.NEXT_PUBLIC_SITE_URL?.trim() || request.nextUrl.origin;
     const { error } = await client.auth.signInWithOtp({
       email: parsed.data.email,
-      options: { emailRedirectTo: `${origin}/api/auth/callback?next=/dashboard` },
+      options: { emailRedirectTo: `${origin}/api/auth/callback?next=${encodeURIComponent(safeReturnDestination(parsed.data.next))}` },
     });
 
     if (error) {

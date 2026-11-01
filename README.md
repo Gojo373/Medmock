@@ -67,6 +67,14 @@ Live provider extraction uploads temporary files and uses billable generation,
 so the read-only check verifies model access only. Authenticated Playwright/axe
 requires a supported Linux host, an existing `E2E_AUTH_STORAGE_STATE` file, and
 real published `E2E_PUBLISHED_PAPER_ID`/`E2E_PUBLISHED_VERSION_ID` values.
+The browser suite runs against `npm run build` followed by the production server,
+or `E2E_BASE_URL` for an existing staging deployment. Placeholder IDs and missing
+configured state files fail fixture validation. Use a dedicated staging student:
+the journeys create mock/practice attempts and persist the privacy preference.
+They verify answer persistence across reload, offline reconnection, submitted
+results, practice locking, and accessibility on the actual protected screens.
+`E2E_ADMIN_STORAGE_STATE` plus `E2E_REVIEW_IMPORT_ID` enables read-only admin/import
+review accessibility checks. Missing fixture skips are not launch verification.
 
 ## Persistence and integrity
 
@@ -76,6 +84,9 @@ real published `E2E_PUBLISHED_PAPER_ID`/`E2E_PUBLISHED_VERSION_ID` values.
 - Answer events are append-only and deduplicated by attempt/event ID.
 - Submission finalization is atomic and replay returns the first stored result.
 - The server deadline decides expiry; client clocks are not authoritative.
+- Events rejected after the receipt grace are retained in the local attempt
+  snapshot, while results score only server-accepted events. Permanent sync
+  conflicts stop automatic retries and retain pending events for recovery.
 - Attempts and results are owner-scoped by RLS.
 - The leaderboard function exposes no user IDs and includes only first strict,
   public, submitted mocks with clear integrity. Hidden names remain anonymous.

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PaperVersion } from "@/features/exam/domain";
 import {
   ExtractionDocumentSchema,
+  normalizeProviderExtractionPayload,
   extractionResponseJsonSchema,
   type ExtractionDocument,
   type ExtractionPayload,
@@ -79,6 +80,41 @@ function document(
 }
 
 describe("provider selection and adapters", () => {
+  it("reopens earlier decisions when a later decision changes their reviewed content", () => {
+    const draft = reconcileExtractions([document("openai")]);
+    draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
+    draft.reviewFlags.push({ id: "title-choice", code: "provider_conflict", path: "paper.title.en", message: "Title choice", severity: "warning", resolved: false });
+    const reviewed = reconciliationModule.applyReviewDecisions(draft, [{ flagId: "title-choice", resolution: "manual_value", manualValue: "A newly reviewed title" }]);
+    expect(reviewed.reviewFlags.find((flag) => flag.code === "admin_review")?.resolved).toBe(false);
+    expect(reviewed.reviewFlags.find((flag) => flag.id === "title-choice")?.resolved).toBe(true);
+  });
+  it.each([null, { en: "Physics", hi: null }])("normalizes absent section translations into blocking review flags: %j", (title) => {
+    const raw = payload();
+    const normalized = normalizeProviderExtractionPayload({ ...raw, paper: { ...raw.paper, sections: [{ id: "physics", subject: "physics", title, questionNumbers: ["1"], selectionLimit: null }] } });
+    const extracted = document("openai", normalized as ExtractionPayload);
+    const draft = reconcileExtractions([extracted]);
+    expect(draft.reviewFlags).toEqual(expect.arrayContaining([expect.objectContaining({ code: "missing_field", path: "paper.sections.physics.title.hi" })]));
+    draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
+    expect(validateImportForPublish(draft).canPublish).toBe(false);
+  });
+
+  it("blocks structurally invalid section membership and limits before publication", () => {
+    const raw = payload();
+    raw.paper.sections = [{ id: "physics", subject: "physics", title: localized("Physics"), questionNumbers: ["missing"], selectionLimit: 2 }];
+    const draft = reconcileExtractions([document("openai", raw)]);
+    draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
+    expect(validateImportForPublish(draft).canPublish).toBe(false);
+    expect(draft.reviewFlags.some((flag) => flag.path.includes("sections.physics"))).toBe(true);
+  });
+  it("reopens decisions contradicted by a later whole-paper edit", () => {
+    const draft = reconcileExtractions([document("openai")]);
+    draft.reviewFlags.push({ id: "title-decision", code: "provider_conflict", path: "paper.title.en", message: "Reviewed title", resolved: true, severity: "warning" });
+    draft.reviewFlags.forEach((flag) => { flag.resolved = true; });
+    const edited = reconciliationModule.applyReviewEdits(draft, [{ path: "paper", value: { ...draft.paper, title: localized("Changed again") } }]);
+    expect(edited.reviewFlags.find((flag) => flag.id === "title-decision")?.resolved).toBe(false);
+    expect(edited.reviewFlags.find((flag) => flag.code === "admin_review")?.resolved).toBe(false);
+    expect(validateImportForPublish(edited).canPublish).toBe(false);
+  });
   it("defines a complete recursively strict provider response schema", () => {
     const objectPaths: string[] = [];
     const missingStrictness: string[] = [];
@@ -362,7 +398,7 @@ describe("reconcileExtractions", () => {
     ];
     const geminiPayload = structuredClone(openaiPayload);
     geminiPayload.paper.durationMinutes = 200;
-    geminiPayload.paper.sections[0].title.hi = "भौतिकी";
+    geminiPayload.paper.sections[0].title!.hi = "भौतिकी";
     geminiPayload.paper.sections[0].selectionLimit = null;
     geminiPayload.paper.questions[0].sectionId = "physics-b";
     geminiPayload.paper.questions[0].subject = "chemistry";

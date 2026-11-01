@@ -2,29 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { logServerEvent } from "@/lib/server/logger";
 import { createSupabaseRouteClient } from "@/lib/supabase/route-client";
-
-function safeNext(value: string | null, origin: string) {
-  if (!value) return "/dashboard";
-
-  try {
-    const resolved = new URL(value, origin);
-    return resolved.origin === origin && value.startsWith("/")
-      ? resolved.pathname + resolved.search + resolved.hash
-      : "/dashboard";
-  } catch {
-    return "/dashboard";
-  }
-}
+import { safeReturnDestination } from "@/lib/auth/return-destination";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
-  const next = safeNext(
+  const next = safeReturnDestination(
     request.nextUrl.searchParams.get("next"),
-    request.nextUrl.origin,
   );
 
   if (!code) {
-    return NextResponse.redirect(new URL("/sign-in?error=callback", request.url));
+    return NextResponse.redirect(new URL(`/sign-in?error=callback&next=${encodeURIComponent(next)}`, request.url));
   }
 
   try {
@@ -33,12 +20,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       logServerEvent("warn", "auth.callback_rejected", { code: error.code });
-      return NextResponse.redirect(new URL("/sign-in?error=callback", request.url));
+      return NextResponse.redirect(new URL(`/sign-in?error=callback&next=${encodeURIComponent(next)}`, request.url));
     }
 
     return applyCookies(NextResponse.redirect(new URL(next, request.url)));
   } catch {
     logServerEvent("error", "auth.callback_failed");
-    return NextResponse.redirect(new URL("/sign-in?error=service", request.url));
+    return NextResponse.redirect(new URL(`/sign-in?error=service&next=${encodeURIComponent(next)}`, request.url));
   }
 }

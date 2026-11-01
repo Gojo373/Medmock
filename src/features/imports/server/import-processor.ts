@@ -60,36 +60,19 @@ function requireFile(files: StoredImportFile[], kind: ImportFileKind) {
   return file;
 }
 
-function applyOfficialAnswerKeyEntries(
+function normalizeProviderProvenance(
   document: ExtractionDocument,
   answerKey: StoredImportFile | undefined,
 ) {
-  if (!answerKey) return document;
-
-  const entryByQuestion = new Map(
-    document.officialAnswerKeyEntries.map((entry) => [
-      entry.sourceNumber,
-      entry.acceptedOptionIds,
-    ]),
-  );
-
   return {
     ...document,
+    officialAnswerKeyEntries: answerKey ? document.officialAnswerKeyEntries : [],
     paper: {
       ...document.paper,
-      questions: document.paper.questions.map((question) => {
-        const officialAnswer = entryByQuestion.get(question.sourceNumber);
-        return officialAnswer
-          ? {
-              ...question,
-              acceptedOptionIds: officialAnswer,
-              answerKeyProvenance: {
-                source: "official" as const,
-                reference: answerKey.id,
-              },
-            }
-          : question;
-      }),
+      questions: document.paper.questions.map((question) => ({
+        ...question,
+        answerKeyProvenance: { source: "provider" as const },
+      })),
     },
   };
 }
@@ -141,10 +124,30 @@ export async function processClaimedImportJob(
       if (!runtime) throw new Error(`${providerId} import provider is not configured.`);
       const source = await prepareSource(files, downloaded, runtime);
       const document = await runtime.provider.extract(source);
-      documents.push(applyOfficialAnswerKeyEntries(document, answerKey));
+      documents.push(normalizeProviderProvenance(document, answerKey));
     }
 
-    const reconciled = reconcileExtractions(documents);
+    const officialAnswerKey: Record<string, string[]> = {};
+    const conflicts: Record<string, Record<string, string[]>> = {};
+    const sourceNumbers = new Set(documents.flatMap((document) => document.officialAnswerKeyEntries.map((entry) => entry.sourceNumber)));
+    for (const sourceNumber of sourceNumbers) {
+      const values = documents.flatMap((document) => document.officialAnswerKeyEntries
+        .filter((entry) => entry.sourceNumber === sourceNumber)
+        .map((entry) => ({ provider: document.provider, answers: [...new Set(entry.acceptedOptionIds)].sort() })));
+      if (new Set(values.map((value) => JSON.stringify(value.answers))).size === 1) {
+        officialAnswerKey[sourceNumber] = values[0].answers;
+      } else {
+        conflicts[sourceNumber] = Object.fromEntries(values.map((value) => [value.provider, value.answers]));
+      }
+    }
+    const reconciled = reconcileExtractions(documents, { officialAnswerKey, officialAnswerKeyFileId: answerKey?.id });
+    for (const [sourceNumber, providerValues] of Object.entries(conflicts)) {
+      const path = `questions.${sourceNumber}.acceptedOptionIds`;
+      const id = `provider_conflict:${path}`;
+      reconciled.reviewFlags = reconciled.reviewFlags.filter((flag) => flag.id !== id);
+      reconciled.reviewFlags.push({ id, code: "provider_conflict", path, severity: "error", resolved: false,
+        message: "Official answer-key extractions disagree; review the attachment.", providerValues });
+    }
     await repository.completeExtraction(job, documents, reconciled);
     return reconciled;
   } catch (error) {

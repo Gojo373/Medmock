@@ -3,6 +3,7 @@ import {
   type AnswerEvent,
   type ExamSessionState,
 } from "@/features/exam/session";
+import { AttemptSyncError, type EventSyncOutcome } from "@/features/exam/client-attempt";
 
 type EventSyncResponse = {
   acceptedEventIds: string[];
@@ -12,9 +13,10 @@ type EventSyncResponse = {
 function normalizePersistedAnswerEvent(value: AnswerEvent): AnswerEvent {
   return {
     ...value,
+    occurredAt: Math.round(value.occurredAt),
     timeSpentMs:
       Number.isFinite(value.timeSpentMs) && value.timeSpentMs >= 0
-        ? value.timeSpentMs
+        ? Math.round(value.timeSpentMs)
         : 0,
   };
 }
@@ -28,9 +30,8 @@ export function normalizePersistedExamSession(value: unknown): ExamSessionState 
   const eventQueue = Array.isArray(state.eventQueue)
     ? state.eventQueue.map(normalizePersistedAnswerEvent)
     : [];
-  const timeSpentByQuestionMs = {
-    ...(state.timeSpentByQuestionMs ?? {}),
-  };
+  const timeSpentByQuestionMs = Object.fromEntries(Object.entries(state.timeSpentByQuestionMs ?? {})
+    .map(([id, milliseconds]) => [id, Number.isFinite(milliseconds) ? Math.max(0, Math.round(milliseconds)) : 0]));
 
   for (const event of eventQueue) {
     timeSpentByQuestionMs[event.questionId] = Math.max(
@@ -45,7 +46,7 @@ export function normalizePersistedExamSession(value: unknown): ExamSessionState 
     eventQueue,
     timeSpentByQuestionMs,
     questionEnteredAtMs: Number.isFinite(state.questionEnteredAtMs)
-      ? state.questionEnteredAtMs
+      ? Math.round(state.questionEnteredAtMs)
       : nowMs,
     nextClientSequence: Math.max(
       Number.isFinite(state.nextClientSequence) ? state.nextClientSequence : 1,
@@ -59,32 +60,54 @@ export function createAttemptEventSyncController({
   getEvents,
   sendEvents,
   acknowledge,
+  reject,
 }: {
   getEvents: () => AnswerEvent[];
   sendEvents: (events: AnswerEvent[]) => Promise<EventSyncResponse>;
   acknowledge: (eventIds: string[]) => Promise<void>;
+  reject?: (events: AnswerEvent[]) => Promise<void>;
 }) {
   let requested = false;
-  let running: Promise<void> | undefined;
+  let running: Promise<EventSyncOutcome> | undefined;
+  let terminal: EventSyncOutcome | undefined;
+  const rejectedEventIds = new Set<string>();
 
-  async function drain() {
+  async function drain(): Promise<EventSyncOutcome> {
     while (requested) {
       requested = false;
       const events = mergeAnswerEvents([], getEvents()).slice(0, 500);
       if (events.length === 0) continue;
 
-      const result = await sendEvents(events);
-      await acknowledge([
-        ...result.acceptedEventIds,
-        ...result.duplicateEventIds,
-      ]);
+      try {
+        const result = await sendEvents(events);
+        const acknowledged = [...result.acceptedEventIds, ...result.duplicateEventIds];
+        if (!events.some((event) => acknowledged.includes(event.id))) throw new Error("Sync made no progress");
+        await acknowledge(acknowledged);
+      } catch (error) {
+        if (!(error instanceof AttemptSyncError)) throw error;
+        if (error.code === "attempt_submitted") {
+          return terminal = { status: "submitted" };
+        }
+        const rejected = events.find((event) => event.id === error.eventId);
+        if (error.code === "event_after_deadline" && rejected && reject) {
+          await reject([rejected]);
+          rejectedEventIds.add(rejected.id);
+          if (getEvents().some((event) => event.id === rejected.id)) throw new Error("Rejected event was not retained separately");
+        } else {
+          return terminal = { status: "blocked", code: error.code };
+        }
+      }
 
       if (getEvents().length > 0) requested = true;
     }
+    return rejectedEventIds.size > 0
+      ? { status: "rejected", rejectedEventIds: [...rejectedEventIds] }
+      : { status: "drained" };
   }
 
   return {
     request() {
+      if (terminal) return Promise.resolve(terminal);
       requested = true;
       if (!running) {
         running = drain().finally(() => {

@@ -172,3 +172,33 @@ the browser state file is missing, published IDs are placeholders, and no
 published staging paper is present. The final local commit subject is
 `fix: finish provider controls and bilingual student flows`. See the current
 handoff and final task report; Task 6 is not complete.
+
+### Final whole-branch fix wave (2026-11-01)
+
+This continuation supersedes the older local review queues. Against `3309bb8`,
+the complete review identified 2 Critical, 6 Important, and 3 Minor findings.
+
+- [x] Observe RED and implement all 11 locally actionable findings in one wave:
+  integral clock/recovery times, frozen expiry and typed permanent-sync outcomes,
+  local-ID rebinding, consistent dirty review editors, section translation and
+  structural validation, canonical backed official keys, production browser
+  fixtures/journeys, denied storage, Hindi fallbacks, auth return destinations,
+  and Next 16 refetching retry.
+- [x] Strengthen production API and component-hook coverage for outside-grace
+  receipt, accepted-state finalization, lost acknowledgement, initial connection
+  failure, and a repeated terminal-sync render loop discovered during self-review.
+- [x] Run final unchanged-source full tests, lint, type-check, production build,
+  and browser command; record the exact Android limitation if still present.
+- [x] Update report/ledger/handoff and commit repository changes without AGENTS.md.
+
+Task 6 remains incomplete until supported-host browser and all documented
+external launch validations pass. This wave does not authorize external
+deployment, publication, auth changes, billable provider generation, or database
+mutations. Its intended commit subject is
+`fix: resolve final attempt and review integrity findings`.
+
+Final wave evidence: 34 files / 171 tests passed (392.31s); lint, type-check, and
+production build exited 0 with 14/14 pages and all dynamic routes plus Proxy.
+The browser command exited 1 before discovery with `Unsupported platform:
+android` under Node v24.22.1. The action of running the gates is complete;
+the mandatory successful browser/external validation for Task 6 remains open.

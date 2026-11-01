@@ -5,11 +5,12 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/features/localization/locale-provider";
+import { readBrowserPreference, writeBrowserPreference } from "@/lib/browser-storage";
 
 export function ThemeToggle() {
   const { locale } = useLocale();
   const [dark, setDark] = useState(
-    () => typeof window !== "undefined" && window.localStorage.getItem("medmock-theme") === "dark",
+    () => readBrowserPreference("medmock-theme") === "dark",
   );
 
   useEffect(() => {
@@ -20,7 +21,7 @@ export function ThemeToggle() {
     setDark((current) => {
       const next = !current;
       document.documentElement.classList.toggle("dark", next);
-      window.localStorage.setItem("medmock-theme", next ? "dark" : "light");
+      writeBrowserPreference("medmock-theme", next ? "dark" : "light");
       return next;
     });
   }

@@ -64,8 +64,8 @@ export const ExtractionSectionSchema = z
   .object({
     id: z.string().trim().min(1),
     subject: SubjectSchema,
-    title: PartialLocalizedTextSchema,
-    questionNumbers: z.array(z.string().trim().min(1)).min(1),
+    title: PartialLocalizedTextSchema.optional(),
+    questionNumbers: z.array(z.string().trim().min(1)),
     selectionLimit: z.number().int().positive().nullable().optional(),
   })
   .strict();
@@ -155,8 +155,8 @@ function normalizeLocalizedProviderValue(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
   const localized = value as Record<string, unknown>;
   const result = {
-    ...(typeof localized.en === "string" ? { en: localized.en } : {}),
-    ...(typeof localized.hi === "string" ? { hi: localized.hi } : {}),
+    ...(typeof localized.en === "string" && localized.en.trim() ? { en: localized.en } : {}),
+    ...(typeof localized.hi === "string" && localized.hi.trim() ? { hi: localized.hi } : {}),
   };
   return Object.keys(result).length > 0 ? result : undefined;
 }
@@ -182,6 +182,11 @@ export function normalizeProviderExtractionPayload(value: unknown) {
     paper: {
       ...paper,
       title: normalizeLocalizedProviderValue(paper.title),
+      sections: Array.isArray(paper.sections) ? paper.sections.map((value) => {
+        if (!value || typeof value !== "object") return value;
+        const section = value as Record<string, unknown>;
+        return { ...section, title: normalizeLocalizedProviderValue(section.title) };
+      }) : [],
       questions: questions.map((value) => {
         if (!value || typeof value !== "object") return value;
         const question = value as Record<string, unknown>;

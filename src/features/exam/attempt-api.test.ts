@@ -5,6 +5,9 @@ import { POST as submitAttempt } from "@/app/api/attempts/[attemptId]/submit/rou
 import { POST as createAttempt } from "@/app/api/attempts/route";
 import { sampleExamPaper } from "@/features/exam/sample-exam-paper";
 import * as attemptStore from "@/features/exam/server/attempt-store";
+import { createAttemptEventSyncController } from "@/features/exam/persistence";
+import { finalizeSynchronizedAttempt, readAttemptResponse } from "@/features/exam/client-attempt";
+import type { AnswerEvent } from "@/features/exam/session";
 
 const startedAtMs = Date.parse("2026-10-28T10:00:00.000Z");
 
@@ -93,6 +96,44 @@ afterEach(() => {
 });
 
 describe("attempt API contracts", () => {
+  it("finalizes accepted server answers outside receipt grace and recovers a lost submitted acknowledgement", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(startedAtMs);
+    const { body: attempt } = await startAttempt();
+    const accepted = answerEvent(attempt.attemptId);
+    await appendEvents(eventRequest(attempt.attemptId, [accepted]), routeContext(attempt.attemptId));
+    const late = { ...answerEvent(attempt.attemptId), selectedOptionId: "A", clientSequence: 2 };
+    let queue: AnswerEvent[] = [accepted, late];
+    const rejected: AnswerEvent[] = [];
+    vi.mocked(Date.now).mockReturnValue(Date.parse(attempt.deadlineAt) + 30_001);
+    const controller = createAttemptEventSyncController({
+      getEvents: () => queue,
+      sendEvents: async (events) => readAttemptResponse(await appendEvents(new Request(`http://localhost/api/attempts/${attempt.attemptId}/events`, {
+        method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body: JSON.stringify({ events }),
+      }), routeContext(attempt.attemptId))),
+      acknowledge: async (ids) => { queue = queue.filter((event) => !ids.includes(event.id)); },
+      reject: async (events) => { rejected.push(...events); queue = queue.filter((event) => !events.some((item) => item.id === event.id)); },
+    });
+    async function submitResponse() { return submitAttempt(submissionRequest(attempt.attemptId), routeContext(attempt.attemptId)); }
+    const outcome = await finalizeSynchronizedAttempt({ sync: () => controller.request(), submit: async () => readAttemptResponse(await submitResponse()) });
+    expect(outcome.status).toBe("complete");
+    if (outcome.status !== "complete") throw new Error("Expected finalization");
+    expect(outcome.result.result.score).toBe(4);
+    expect(rejected.map((event) => event.id)).toEqual([late.id]);
+    expect(queue).toEqual([]);
+
+    const recovered = await finalizeSynchronizedAttempt({
+      sync: async () => {
+        const recovery = createAttemptEventSyncController({
+          getEvents: () => [late],
+          sendEvents: async () => readAttemptResponse(await appendEvents(eventRequest(attempt.attemptId, [late]), routeContext(attempt.attemptId))),
+          acknowledge: async () => { throw new Error("Must preserve unacknowledged evidence"); },
+        });
+        return recovery.request();
+      },
+      submit: async () => readAttemptResponse(await submitResponse()),
+    });
+    expect(recovered).toMatchObject({ status: "complete", result: outcome.result, sync: { status: "submitted" } });
+  });
   it("normalizes PostgREST offset timestamps at the persistent adapter boundary", () => {
     const normalizeAttemptDatabaseRow = (
       attemptStore as typeof attemptStore & {

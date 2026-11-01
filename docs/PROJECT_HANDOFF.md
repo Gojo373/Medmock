@@ -2,6 +2,51 @@
 
 Last updated: 2026-11-01
 
+## Latest checkpoint — final whole-branch fix wave
+
+This section supersedes every historical checkpoint below. Branch:
+`feat/medmock-mvp`; this wave started at `3309bb8`. The intended commit subject is
+`fix: resolve final attempt and review integrity findings`.
+
+All 11 findings from the 2026-11-01 final whole-branch queue are locally
+implemented with observed RED→GREEN evidence in the existing Task 6 report:
+
+- Server clock offsets and recovered legacy event timings are integral.
+  Expiry freezes one final event set. Explicit synchronization outcomes preserve
+  rejected late events locally, stop permanent conflicts, and recover existing
+  submitted server results; accepted server state remains authoritative.
+- Generated local attempt identities use shared detection and connection before
+  submission. A production-hook regression covers initial connection failure,
+  rebinding, and lost submission acknowledgement without a retry/render loop.
+- Clean admin editors follow decisions; dirty content remains intact with an
+  explicit conflict action. Changed reviewed content reopens affected flags and
+  admin review. Missing section translations and invalid section structure block
+  publication. Backed official-key entries override suggestions from either
+  provider; conflicting keys remain flagged and model provenance is normalized.
+- Browser journeys use actual environment-backed publication/auth fixtures and
+  assert protected content, recovery, results, practice locking, and axe checks.
+  They run against the production build or `E2E_BASE_URL`; admin accessibility
+  additionally uses `E2E_ADMIN_STORAGE_STATE` and `E2E_REVIEW_IMPORT_ID`.
+- Denied localStorage has an in-memory fallback. Hindi error/not-found screens,
+  Next 16 refetching `retry`, and validated auth return destinations are complete.
+
+Final unchanged-source gates: 34 files / 171 tests passed in 392.31s; lint and
+type-check exited 0; production build exited 0, generated 14/14 pages, and
+compiled every dynamic route plus Proxy. Playwright exited 1 before discovery
+with `Error: Unsupported platform: android` under Node v24.22.1.
+See the final wave section in
+`.superpowers/sdd/2026-10-28-medmock-mvp/task-6-report.md` for exact commands,
+results, and self-review. The wave is committed under the subject above;
+locate its SHA with `git log`. `AGENTS.md` remains untouched and excluded.
+
+Task 6 is **not complete** until Linux authenticated Playwright/axe and the
+existing external gates pass: staging SQL/RLS plus the unapplied provider-removal
+migration, deployed Google/email auth/cookies/signed uploads/cron/Vercel checks,
+representative approved provider extraction, and the 500-concurrent-attempt load
+target. No external configuration, publication, or database changes were made
+in this wave. Resume those gates when their required access/fixtures exist;
+do not repeat the completed local fix queue.
+
 ## Current checkpoint — final local delta, external gates still open
 
 This section supersedes all historical restart/checkpoint instructions below.

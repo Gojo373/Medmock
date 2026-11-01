@@ -5,6 +5,16 @@ import { createExamSession, examSessionReducer } from "@/features/exam/session";
 import * as recovery from "@/features/exam/recovery";
 
 describe("exam connection recovery", () => {
+  it("recognizes generated local IDs and connects before submission after initial failure", async () => {
+    const identity = recovery.buildAttemptRecoveryIdentity({ userId: "student", paperVersionId: sampleExamPaper.id, mode: "mock", generation: "retry" });
+    let attemptId = identity.localAttemptId;
+    expect(recovery.isLocalAttemptId(attemptId)).toBe(true);
+    const connect = vi.fn().mockResolvedValueOnce(false).mockImplementationOnce(async () => { attemptId = "8cbb9106-cf41-4f63-8bd6-11c38bb7033a"; return true; });
+    await expect(recovery.ensureServerAttempt({ getAttemptId: () => attemptId, connect })).resolves.toBe(false);
+    await expect(recovery.ensureServerAttempt({ getAttemptId: () => attemptId, connect })).resolves.toBe(true);
+    expect(recovery.isLocalAttemptId(attemptId)).toBe(false);
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
   it("namespaces recovery by user, version, mode, and generation and rejects mismatched snapshots", () => {
     const buildAttemptRecoveryIdentity = (
       recovery as typeof recovery & {

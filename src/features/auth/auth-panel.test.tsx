@@ -10,6 +10,17 @@ afterEach(() => {
 });
 
 describe("AuthPanel", () => {
+  it("forwards the selected published version to Google and email sign-in", async () => {
+    const next = "/papers/neet/mock?version=published-2";
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<LocaleProvider><AuthPanel next={next} /></LocaleProvider>);
+    expect(screen.getByRole("link", { name: /Google/ })).toHaveAttribute("href", `/api/auth/google?next=${encodeURIComponent(next)}`);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Email address" }), "student@example.com");
+    await user.click(screen.getByRole("button", { name: "Send sign-in code" }));
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ email: "student@example.com", next });
+  });
   it("requests an email OTP and confirms that the code was sent", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockResolvedValue(

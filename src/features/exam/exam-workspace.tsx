@@ -23,6 +23,7 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/features/localization/locale-provider";
 import type { PaperVersion } from "@/features/exam/domain";
+import { calculateServerClockOffset, finalizeSynchronizedAttempt, sendAttemptEvents, submitServerAttempt, type EventSyncOutcome } from "@/features/exam/client-attempt";
 import {
   createAttemptEventSyncController,
   IndexedDbAttemptPersistence,
@@ -32,6 +33,8 @@ import {
   buildAttemptRecoveryIdentity,
   createOnlineAttemptRecovery,
   createRetryingFinalizer,
+  ensureServerAttempt,
+  isLocalAttemptId,
   rebindExamSessionAttempt,
   validateRecoverableSession,
 } from "@/features/exam/recovery";
@@ -42,6 +45,7 @@ import {
   type ExamMode,
 } from "@/features/exam/session";
 import { formatExamTime, getRemainingTimeMs } from "@/features/exam/timer";
+import { readBrowserPreference, removeBrowserPreference, writeBrowserPreference } from "@/lib/browser-storage";
 
 function eventId() {
   return globalThis.crypto?.randomUUID?.() ?? "event-" + Date.now() + "-" + Math.random();
@@ -85,7 +89,7 @@ const examCopy = {
     confirmSubmission: "Confirm submission",
     timeUp: "Time is up",
     submitted: "Attempt submitted",
-    submittedDescription: "Your answers are safely queued for final scoring and synchronization.",
+    submittedDescription: "Your attempt has been scored using answers accepted by the server.",
     viewResults: "View results",
   },
   hi: {
@@ -125,7 +129,7 @@ const examCopy = {
     confirmSubmission: "जमा करने की पुष्टि करें",
     timeUp: "समय समाप्त",
     submitted: "प्रयास जमा हो गया",
-    submittedDescription: "आपके उत्तर अंतिम स्कोरिंग और सिंक के लिए सुरक्षित रूप से कतार में हैं।",
+    submittedDescription: "आपके प्रयास का स्कोर सर्वर द्वारा स्वीकार किए गए उत्तरों से तैयार है।",
     viewResults: "परिणाम देखें",
   },
 } as const;
@@ -147,6 +151,7 @@ const syncCopy: Record<"en" | "hi", Record<string, string>> = {
     "Submitted and scored": "जमा और स्कोर किया गया",
     "Submission failed · retry safely": "जमा करना विफल · सुरक्षित पुनः प्रयास करें",
     "Expiry submission will retry": "समय-समाप्त जमा फिर प्रयास करेगा",
+    "Sync needs attention · answers retained on this device": "सिंक पर ध्यान दें · उत्तर इस डिवाइस पर सुरक्षित हैं",
   },
 };
 
@@ -183,11 +188,11 @@ export function ExamWorkspace({
     let generation =
       typeof window === "undefined"
         ? "server-render"
-        : window.localStorage.getItem(generationStorageKey);
+        : readBrowserPreference(generationStorageKey);
     if (!generation || generation === "server-render") {
       generation = globalThis.crypto?.randomUUID?.() ?? `generation-${Date.now()}`;
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(generationStorageKey, generation);
+        writeBrowserPreference(generationStorageKey, generation);
       }
     }
     return buildAttemptRecoveryIdentity({
@@ -215,6 +220,16 @@ export function ExamWorkspace({
   const stateRef = useRef(state);
   const text = examCopy[locale];
   const displayedSyncMessage = syncCopy[locale][syncMessage] ?? syncMessage;
+
+  const handleSyncOutcome = useCallback((outcome: EventSyncOutcome) => {
+    if (outcome.status === "blocked") {
+      setSyncMessage("Sync needs attention · answers retained on this device");
+    } else if (outcome.status === "submitted" && stateRef.current.status !== "submitted" && stateRef.current.status !== "finalizing") {
+      const restored = { ...stateRef.current, status: "finalizing" as const, syncNotice: "server_submitted" as const };
+      stateRef.current = restored;
+      dispatch({ type: "RESTORE_SESSION", state: restored });
+    }
+  }, []);
 
   useEffect(() => {
     stateRef.current = state;
@@ -327,9 +342,9 @@ export function ExamWorkspace({
       if (!response.ok) throw new Error("Attempt creation failed.");
       const created = await response.json();
       const responseReceivedAt = Date.now();
-      serverClockOffsetRef.current =
-        Date.parse(created.serverNow) -
-        (requestStartedAt + responseReceivedAt) / 2;
+      serverClockOffsetRef.current = calculateServerClockOffset(
+        requestStartedAt, responseReceivedAt, created.serverNow,
+      );
       const saved = await persistence.loadSession(created.attemptId);
       const serverQueuedEvents = await persistence.getQueuedEvents(created.attemptId);
       const currentSession = stateRef.current;
@@ -351,7 +366,7 @@ export function ExamWorkspace({
           authoritativeNowMs,
         ),
       };
-      const localEvents = currentSession.attemptId.startsWith("local-")
+      const localEvents = isLocalAttemptId(currentSession.attemptId)
         ? currentSession.eventQueue.map((event) => ({
             ...event,
             attemptId: created.attemptId,
@@ -371,18 +386,20 @@ export function ExamWorkspace({
       };
       syncControllerRef.current = createAttemptEventSyncController({
         getEvents: () => stateRef.current.eventQueue,
-        sendEvents: async (events) => {
-          const eventResponse = await fetch(
-            `/api/attempts/${created.attemptId}/events`,
-            {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ events }),
-            },
-          );
-          if (!eventResponse.ok) throw new Error("Sync failed");
-          return eventResponse.json();
+        sendEvents: (events) => sendAttemptEvents(created.attemptId, events),
+        reject: async (events) => {
+          const ids = new Set(events.map((event) => event.id));
+          const retained = {
+            ...stateRef.current,
+            eventQueue: stateRef.current.eventQueue.filter((event) => !ids.has(event.id)),
+            rejectedEvents: mergeAnswerEvents(stateRef.current.rejectedEvents ?? [], events),
+            syncNotice: "late_events" as const,
+          };
+          // Persist the rejected evidence before removing it from the pending store.
+          await persistence.saveSession(retained);
+          await persistence.markEventsSynced([...ids]);
+          stateRef.current = retained;
+          dispatch({ type: "RESTORE_SESSION", state: retained });
         },
         acknowledge: async (eventIds) => {
           await persistence.markEventsSynced(eventIds);
@@ -404,7 +421,7 @@ export function ExamWorkspace({
         dispatch({ type: "RESTORE_SESSION", state: restored });
         setSyncMessage("Saved and synchronized");
         if (restored.eventQueue.length > 0) {
-          void syncControllerRef.current.request().catch(() => {
+          void syncControllerRef.current.request().then(handleSyncOutcome).catch(() => {
             setSyncMessage("Offline · retrying");
           });
         }
@@ -434,71 +451,83 @@ export function ExamWorkspace({
       recovery.stop();
       attemptRecoveryRef.current = undefined;
     };
-  }, [mode, paper, recoveryIdentity]);
+  }, [mode, paper, recoveryIdentity, handleSyncOutcome]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === "test" || !persistenceRef.current) return;
     const persistence = persistenceRef.current;
 
+    if (state.status === "submitted") return;
     persistence.saveSession(state).catch(() => setSyncMessage("Local save failed"));
     persistence.queueEvents(state.eventQueue).catch(() => setSyncMessage("Offline · retrying"));
 
-    if (state.eventQueue.length === 0 || state.attemptId.startsWith("local-")) return;
+    if (state.eventQueue.length === 0 || isLocalAttemptId(state.attemptId)) return;
 
     syncControllerRef.current
       ?.request()
+      .then(handleSyncOutcome)
       .catch(() => setSyncMessage("Offline · retrying"));
-  }, [state]);
+  }, [state, handleSyncOutcome]);
+
+  useEffect(() => {
+    const reconnect = () => {
+      if (stateRef.current.status === "submitted") return;
+      void syncControllerRef.current?.request().then(handleSyncOutcome).catch(() => setSyncMessage("Offline · retrying"));
+    };
+    window.addEventListener("online", reconnect);
+    return () => window.removeEventListener("online", reconnect);
+  }, [handleSyncOutcome]);
 
   const confirmSubmission = useCallback(async () => {
-    if (state.attemptId.startsWith("local-")) {
+    if (isLocalAttemptId(stateRef.current.attemptId)) {
       setSyncMessage("Connecting before submission…");
-      const connected = await attemptRecoveryRef.current?.retry();
-      setSyncMessage(
-        connected
-          ? "Connected · confirm submission again"
-          : "Offline · submission will retry",
-      );
-      return false;
+      const connected = await ensureServerAttempt({
+        getAttemptId: () => stateRef.current.attemptId,
+        connect: async () => await attemptRecoveryRef.current?.retry() ?? false,
+      });
+      if (!connected) {
+        setSyncMessage("Offline · submission will retry");
+        return false;
+      }
     }
 
     try {
       setSyncMessage("Finalizing securely…");
-      if (stateRef.current.eventQueue.length > 0) {
-        await syncControllerRef.current?.request();
-      }
-      if (stateRef.current.eventQueue.length > 0) {
-        setSyncMessage("Submission waiting for answer sync");
-        return false;
-      }
-
-      const response = await fetch(`/api/attempts/${state.attemptId}/submit`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ idempotencyKey: `submit:${state.attemptId}` }),
+      const outcome = await finalizeSynchronizedAttempt({
+        sync: async () => {
+          if (!syncControllerRef.current) throw new Error("Connection pending");
+          return syncControllerRef.current.request();
+        },
+        submit: () => submitServerAttempt(stateRef.current.attemptId),
       });
-
-      if (!response.ok) throw new Error("Submission failed");
-      const result = await response.json();
-      await persistenceRef.current?.retireAttempt(state.attemptId);
+      if (outcome.status === "blocked") {
+        setSyncMessage("Sync needs attention · answers retained on this device");
+        return "blocked" as const;
+      }
+      if (outcome.status === "retry") throw new Error("Submission pending");
+      const completed = examSessionReducer(stateRef.current, { type: "CONFIRM_SUBMIT", submittedAt: Date.parse(outcome.result.submittedAt) });
+      if (outcome.sync.status === "submitted") completed.syncNotice ??= "server_submitted";
+      if (completed.rejectedEvents?.length || completed.eventQueue.length) {
+        await persistenceRef.current?.saveSession(completed);
+      } else {
+        await persistenceRef.current?.retireAttempt(completed.attemptId);
+      }
       await persistenceRef.current?.retireAttempt(recoveryIdentity.localAttemptId);
-      window.localStorage.removeItem(recoveryIdentity.generationStorageKey);
-      dispatch({ type: "CONFIRM_SUBMIT", submittedAt: Date.parse(result.submittedAt) });
+      removeBrowserPreference(recoveryIdentity.generationStorageKey);
+      stateRef.current = completed;
+      dispatch({ type: "RESTORE_SESSION", state: completed });
       setSyncMessage("Submitted and scored");
       return true;
     } catch {
       setSyncMessage("Submission failed · retry safely");
       return false;
     }
-  }, [recoveryIdentity, state.attemptId]);
+  }, [recoveryIdentity]);
 
   useEffect(() => {
     if (
       process.env.NODE_ENV === "test" ||
-      state.status !== "finalizing" ||
-      state.submissionReason !== "expired" ||
-      state.attemptId.startsWith("local-")
+      state.status !== "finalizing"
     ) return;
 
     const finalizer = createRetryingFinalizer({
@@ -837,6 +866,12 @@ export function ExamWorkspace({
             </div>
             <h2 id="submission-complete-title">{state.submissionReason === "expired" ? text.timeUp : text.submitted}</h2>
             <p>{state.status === "submitted" ? text.submittedDescription : displayedSyncMessage}</p>
+            {state.syncNotice === "late_events" && <p role="alert">{locale === "hi"
+              ? "समय-सीमा के बाद पहुँचे कुछ उत्तर स्वीकार नहीं हुए। वे इस डिवाइस पर सुरक्षित हैं; परिणाम में केवल सर्वर द्वारा स्वीकार उत्तर शामिल हैं।"
+              : "Some answers arrived too late to be accepted. They are retained on this device; results include only answers accepted by the server."}</p>}
+            {state.syncNotice === "server_submitted" && <p role="status">{locale === "hi"
+              ? "सर्वर पर जमा परिणाम पुनर्प्राप्त किया गया। लंबित स्थानीय इवेंट इस डिवाइस पर सुरक्षित हैं।"
+              : "Recovered the submitted server result. Pending local events are retained on this device."}</p>}
             {state.status === "submitted" && (
               <Link className="button button--primary" data-initial-focus href="/dashboard">{text.viewResults}</Link>
             )}
